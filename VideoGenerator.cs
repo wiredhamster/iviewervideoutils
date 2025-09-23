@@ -28,6 +28,16 @@ namespace iviewer
         private FileStream _fullStream;
         private FileStream _perPromptStream;
 
+        private enum GenerationStatus
+        {
+            Idle,
+            Generating,
+            Generated,
+            Modified
+        }
+
+        private GenerationStatus _generationStatus = GenerationStatus.Idle;
+
         public VideoGenerator()
         {
             InitializeComponent();
