@@ -37,6 +37,7 @@ namespace iviewer
         }
 
         private GenerationStatus _generationStatus = GenerationStatus.Idle;
+        private bool _updatingRowStatus = false;
 
         public VideoGenerator()
         {
@@ -87,6 +88,8 @@ namespace iviewer
             _perPromptVideoPaths.Add("");
             _rowWorkflows.Add("");
 
+            // Set initial status
+            UpdateRowGenerationStatus(rowIndex);
             UpdateUI();
         }
 
@@ -454,6 +457,7 @@ namespace iviewer
         {
             UpdateResolutionLabel();
             UpdateButtonStates();
+            RefreshAllRowStatuses();
             RefreshPreviewIfOpen();
         }
 
@@ -487,8 +491,24 @@ namespace iviewer
         {
             if (rowIndex >= 0 && rowIndex < dgvPrompts.Rows.Count)
             {
-                dgvPrompts.Rows[rowIndex].Cells["colGenerate"].Value = status;
+                var row = dgvPrompts.Rows[rowIndex];
+                row.Cells["colGenerate"].Value = status;
+
+                // Apply color coding for generating status
+                var generateCell = row.Cells["colGenerate"];
+                if (status == "Generating...")
+                {
+                    generateCell.Style.BackColor = Color.LightBlue;
+                    generateCell.Style.ForeColor = Color.DarkBlue;
+                }
+
                 dgvPrompts.Refresh();
+
+                // After generation completes, update to proper status
+                if (status == "Generated")
+                {
+                    UpdateRowGenerationStatus(rowIndex);
+                }
             }
         }
 
@@ -563,10 +583,33 @@ namespace iviewer
             using var ofd = new OpenFileDialog { Filter = "Images|*.png;*.jpg;*.jpeg" };
             if (ofd.ShowDialog() == DialogResult.OK)
             {
+                // Check if this row was previously generated
+                bool wasGenerated = dgvPrompts.Rows[rowIndex].Cells["colGenerate"].Value?.ToString() == "Generated";
+
                 _rowImagePaths[rowIndex] = ofd.FileName;
                 dgvPrompts.Rows[rowIndex].Cells["colImage"].Value =
                     ImageHelper.CreateThumbnail(ofd.FileName, 160, 160);
-                UpdateUI();
+
+                // If it was previously generated, mark for regeneration
+                if (wasGenerated)
+                {
+                    _updatingRowStatus = true;
+                    try
+                    {
+                        dgvPrompts.Rows[rowIndex].Cells["colGenerate"].Value = "Regenerate";
+                        var generateCell = dgvPrompts.Rows[rowIndex].Cells["colGenerate"];
+                        generateCell.Style.BackColor = Color.LightYellow;
+                        generateCell.Style.ForeColor = Color.DarkOrange;
+                    }
+                    finally
+                    {
+                        _updatingRowStatus = false;
+                    }
+                }
+
+                UpdateButtonStates();
+                UpdateResolutionLabel();
+                RefreshPreviewIfOpen();
             }
         }
 
@@ -577,10 +620,30 @@ namespace iviewer
 
         private void OnGridValueChanged(object sender, DataGridViewCellEventArgs e)
         {
-            if (e.RowIndex >= 0)
+            if (e.RowIndex >= 0 && !_updatingRowStatus)
             {
-                ResetRowStatusIfGenerated(e.RowIndex);
-                UpdateUI();
+                // Mark row as potentially modified if it was previously generated
+                var currentStatus = dgvPrompts.Rows[e.RowIndex].Cells["colGenerate"].Value?.ToString();
+                if (currentStatus == "Generated")
+                {
+                    _updatingRowStatus = true;
+                    try
+                    {
+                        dgvPrompts.Rows[e.RowIndex].Cells["colGenerate"].Value = "Regenerate";
+                        var generateCell = dgvPrompts.Rows[e.RowIndex].Cells["colGenerate"];
+                        generateCell.Style.BackColor = Color.LightYellow;
+                        generateCell.Style.ForeColor = Color.DarkOrange;
+                    }
+                    finally
+                    {
+                        _updatingRowStatus = false;
+                    }
+                }
+
+                // Only update UI if we're not in the middle of updating row status
+                UpdateButtonStates();
+                UpdateResolutionLabel();
+                RefreshPreviewIfOpen();
             }
         }
 
@@ -669,6 +732,113 @@ namespace iviewer
         {
             btnExport.Enabled = !isExporting;
             btnExport.Text = text;
+        }
+
+        private void UpdateRowGenerationStatus(int rowIndex)
+        {
+            if (rowIndex < 0 || rowIndex >= dgvPrompts.Rows.Count || _updatingRowStatus)
+                return;
+
+            _updatingRowStatus = true;
+            try
+            {
+                var row = dgvPrompts.Rows[rowIndex];
+                string currentStatus = row.Cells["colGenerate"].Value?.ToString() ?? "Generate";
+
+                // Check if video exists for this row
+                bool hasVideo = rowIndex < _perPromptVideoPaths.Count &&
+                               !string.IsNullOrEmpty(_perPromptVideoPaths[rowIndex]) &&
+                               File.Exists(_perPromptVideoPaths[rowIndex]);
+
+                // Check if row data is valid for generation
+                bool hasValidData = rowIndex < _rowImagePaths.Count &&
+                                   !string.IsNullOrEmpty(_rowImagePaths[rowIndex]) &&
+                                   !string.IsNullOrWhiteSpace(row.Cells["colPrompt"].Value?.ToString());
+
+                // Determine appropriate status
+                string newStatus;
+                if (!hasValidData)
+                {
+                    newStatus = "Generate";
+                }
+                else if (!hasVideo)
+                {
+                    newStatus = "Generate";
+                }
+                else if (currentStatus == "Generating...")
+                {
+                    // Don't change if currently generating
+                    return;
+                }
+                else
+                {
+                    // Has video and valid data - check if it's been modified
+                    if (HasRowBeenModifiedSinceGeneration(rowIndex))
+                    {
+                        newStatus = "Regenerate";
+                    }
+                    else
+                    {
+                        newStatus = "Generated";
+                    }
+                }
+
+                // Only update if status has changed
+                if (currentStatus != newStatus)
+                {
+                    // Update button text and color
+                    row.Cells["colGenerate"].Value = newStatus;
+
+                    // Optional: Change button appearance based on status
+                    var generateCell = row.Cells["colGenerate"];
+                    switch (newStatus)
+                    {
+                        case "Generated":
+                            generateCell.Style.BackColor = Color.LightGreen;
+                            generateCell.Style.ForeColor = Color.DarkGreen;
+                            break;
+                        case "Regenerate":
+                            generateCell.Style.BackColor = Color.LightYellow;
+                            generateCell.Style.ForeColor = Color.DarkOrange;
+                            break;
+                        case "Generate":
+                        default:
+                            generateCell.Style.BackColor = Color.White;
+                            generateCell.Style.ForeColor = Color.Black;
+                            break;
+                    }
+                }
+            }
+            finally
+            {
+                _updatingRowStatus = false;
+            }
+        }
+
+        private bool HasRowBeenModifiedSinceGeneration(int rowIndex)
+        {
+            // This is a simple implementation - you might want to store generation timestamps
+            // or checksums for more accurate tracking
+
+            if (rowIndex >= _perPromptVideoPaths.Count || string.IsNullOrEmpty(_perPromptVideoPaths[rowIndex]))
+                return false;
+
+            string videoPath = _perPromptVideoPaths[rowIndex];
+            if (!File.Exists(videoPath))
+                return true; // Video was deleted, so it's effectively modified
+
+            // For now, we'll assume if the video exists and we're calling this method,
+            // it might have been modified. In a more robust implementation, you'd track
+            // the exact state when generation completed.
+            return false;
+        }
+
+        private void RefreshAllRowStatuses()
+        {
+            for (int i = 0; i < dgvPrompts.Rows.Count; i++)
+            {
+                UpdateRowGenerationStatus(i);
+            }
         }
 
         #endregion
