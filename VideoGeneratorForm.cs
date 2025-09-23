@@ -402,7 +402,7 @@ namespace iviewer
 
         private string ExtractLastFrame(string videoPath)
         {
-            return VideoUtils.ExtractLastFrame(videoPath);
+            return VideoUtils.ExtractLastFrame(videoPath, tempDir);
         }
 
         private async void BtnGenerateAll_Click(object sender, EventArgs e)
