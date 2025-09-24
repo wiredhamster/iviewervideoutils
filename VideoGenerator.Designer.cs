@@ -32,6 +32,8 @@ namespace iviewer
         /// </summary>
         private void InitializeComponent()
         {
+            DataGridViewCellStyle dataGridViewCellStyle2 = new DataGridViewCellStyle();
+            DataGridViewCellStyle dataGridViewCellStyle1 = new DataGridViewCellStyle();
             tabControl = new TabControl();
             tabPageGeneration = new TabPage();
             lblProgress = new Label();
@@ -41,14 +43,13 @@ namespace iviewer
             colPrompt = new DataGridViewTextBoxColumn();
             colLora = new DataGridViewButtonColumn();
             colGenerate = new DataGridViewButtonColumn();
-            btnPreview = new Button();
             btnExtractLast = new Button();
             btnGenerateAll = new Button();
             btnDeleteRow = new Button();
             btnAddRow = new Button();
             lblResolution = new Label();
-            tabPageFullVideo = new TabPage();
             tabPagePerPrompt = new TabPage();
+            tabPageFullVideo = new TabPage();
             btnExport = new Button();
             btnImport = new Button();
             tabControl.SuspendLayout();
@@ -60,8 +61,8 @@ namespace iviewer
             // tabControl
             // 
             tabControl.Controls.Add(tabPageGeneration);
-            tabControl.Controls.Add(tabPageFullVideo);
             tabControl.Controls.Add(tabPagePerPrompt);
+            tabControl.Controls.Add(tabPageFullVideo);
             tabControl.Dock = DockStyle.Fill;
             tabControl.Location = new Point(0, 0);
             tabControl.Name = "tabControl";
@@ -74,7 +75,6 @@ namespace iviewer
             tabPageGeneration.Controls.Add(lblProgress);
             tabPageGeneration.Controls.Add(pbProgress);
             tabPageGeneration.Controls.Add(dgvPrompts);
-            tabPageGeneration.Controls.Add(btnPreview);
             tabPageGeneration.Controls.Add(btnExtractLast);
             tabPageGeneration.Controls.Add(btnGenerateAll);
             tabPageGeneration.Controls.Add(btnDeleteRow);
@@ -116,6 +116,14 @@ namespace iviewer
             dgvPrompts.AutoSizeColumnsMode = DataGridViewAutoSizeColumnsMode.Fill;
             dgvPrompts.ColumnHeadersHeightSizeMode = DataGridViewColumnHeadersHeightSizeMode.AutoSize;
             dgvPrompts.Columns.AddRange(new DataGridViewColumn[] { colImage, colPrompt, colLora, colGenerate });
+            dataGridViewCellStyle2.Alignment = DataGridViewContentAlignment.TopLeft;
+            dataGridViewCellStyle2.BackColor = SystemColors.Window;
+            dataGridViewCellStyle2.Font = new System.Drawing.Font("Segoe UI", 9F);
+            dataGridViewCellStyle2.ForeColor = SystemColors.ControlText;
+            dataGridViewCellStyle2.SelectionBackColor = SystemColors.Highlight;
+            dataGridViewCellStyle2.SelectionForeColor = SystemColors.HighlightText;
+            dataGridViewCellStyle2.WrapMode = DataGridViewTriState.False;
+            dgvPrompts.DefaultCellStyle = dataGridViewCellStyle2;
             dgvPrompts.Location = new Point(6, 35);
             dgvPrompts.Name = "dgvPrompts";
             dgvPrompts.RowHeadersVisible = false;
@@ -123,55 +131,43 @@ namespace iviewer
             dgvPrompts.SelectionMode = DataGridViewSelectionMode.FullRowSelect;
             dgvPrompts.Size = new Size(980, 578);
             dgvPrompts.TabIndex = 6;
-            dgvPrompts.DefaultCellStyle.Alignment = DataGridViewContentAlignment.TopLeft;
             // 
             // colImage
             // 
-            colImage.HeaderText = "Image";
-            colImage.Name = "colImage";
             colImage.FillWeight = 20F;
+            colImage.HeaderText = "Image";
             colImage.ImageLayout = DataGridViewImageCellLayout.Zoom;
+            colImage.Name = "colImage";
             // 
             // colPrompt
             // 
+            dataGridViewCellStyle1.Alignment = DataGridViewContentAlignment.TopLeft;
+            dataGridViewCellStyle1.WrapMode = DataGridViewTriState.True;
+            colPrompt.DefaultCellStyle = dataGridViewCellStyle1;
+            colPrompt.FillWeight = 50F;
             colPrompt.HeaderText = "Prompt";
             colPrompt.Name = "colPrompt";
-            colPrompt.FillWeight = 50F;
-            colPrompt.DefaultCellStyle.WrapMode = DataGridViewTriState.True;
-            colPrompt.DefaultCellStyle.Alignment = DataGridViewContentAlignment.TopLeft;
             // 
             // colLora
             // 
+            colLora.FillWeight = 15F;
             colLora.HeaderText = "LoRA";
             colLora.Name = "colLora";
-            colLora.FillWeight = 15F;
             colLora.Text = "Select LoRA";
             colLora.UseColumnTextForButtonValue = true;
             // 
             // colGenerate
             // 
+            colGenerate.FillWeight = 15F;
             colGenerate.HeaderText = "Action";
             colGenerate.Name = "colGenerate";
-            colGenerate.FillWeight = 15F;
             colGenerate.Text = "Generate";
-            colGenerate.UseColumnTextForButtonValue = false;
-            // 
-            // btnPreview
-            // 
-            btnPreview.Anchor = AnchorStyles.Top | AnchorStyles.Right;
-            btnPreview.Location = new Point(906, 6);
-            btnPreview.Name = "btnPreview";
-            btnPreview.Size = new Size(80, 23);
-            btnPreview.TabIndex = 5;
-            btnPreview.Text = "Preview";
-            btnPreview.UseVisualStyleBackColor = true;
-            btnPreview.Click += btnPreview_Click;
             // 
             // btnExtractLast
             // 
             btnExtractLast.Anchor = AnchorStyles.Top | AnchorStyles.Right;
             btnExtractLast.Enabled = false;
-            btnExtractLast.Location = new Point(810, 6);
+            btnExtractLast.Location = new Point(896, 6);
             btnExtractLast.Name = "btnExtractLast";
             btnExtractLast.Size = new Size(90, 23);
             btnExtractLast.TabIndex = 4;
@@ -182,7 +178,7 @@ namespace iviewer
             // btnGenerateAll
             // 
             btnGenerateAll.Anchor = AnchorStyles.Top | AnchorStyles.Right;
-            btnGenerateAll.Location = new Point(704, 6);
+            btnGenerateAll.Location = new Point(790, 6);
             btnGenerateAll.Name = "btnGenerateAll";
             btnGenerateAll.Size = new Size(100, 23);
             btnGenerateAll.TabIndex = 3;
@@ -225,7 +221,7 @@ namespace iviewer
             tabPageFullVideo.Name = "tabPageFullVideo";
             tabPageFullVideo.Padding = new Padding(3);
             tabPageFullVideo.Size = new Size(992, 672);
-            tabPageFullVideo.TabIndex = 1;
+            tabPageFullVideo.TabIndex = 2;
             tabPageFullVideo.Text = "Full Video";
             tabPageFullVideo.UseVisualStyleBackColor = true;
             // 
@@ -237,7 +233,7 @@ namespace iviewer
             tabPagePerPrompt.Name = "tabPagePerPrompt";
             tabPagePerPrompt.Padding = new Padding(3);
             tabPagePerPrompt.Size = new Size(992, 672);
-            tabPagePerPrompt.TabIndex = 2;
+            tabPagePerPrompt.TabIndex = 1;
             tabPagePerPrompt.Text = "Per-Prompt Videos";
             tabPagePerPrompt.UseVisualStyleBackColor = true;
             // 
@@ -263,13 +259,13 @@ namespace iviewer
             btnImport.UseVisualStyleBackColor = true;
             btnImport.Click += btnImport_Click;
             // 
-            // VideoGeneratorForm
+            // VideoGenerator
             // 
             AutoScaleDimensions = new SizeF(96F, 96F);
             AutoScaleMode = AutoScaleMode.Dpi;
             ClientSize = new Size(1000, 700);
             Controls.Add(tabControl);
-            Name = "VideoGeneratorForm";
+            Name = "VideoGenerator";
             Text = "Video Generator";
             tabControl.ResumeLayout(false);
             tabPageGeneration.ResumeLayout(false);
@@ -292,7 +288,6 @@ namespace iviewer
         private Button btnDeleteRow;
         private Button btnGenerateAll;
         private Button btnExtractLast;
-        private Button btnPreview;
         private DataGridView dgvPrompts;
         private DataGridViewImageColumn colImage;
         private DataGridViewTextBoxColumn colPrompt;
@@ -328,15 +323,6 @@ namespace iviewer
         private void btnExtractLast_Click(object sender, EventArgs e)
         {
             ExtractLastFrameFromSelected();
-        }
-
-        private void btnPreview_Click(object sender, EventArgs e)
-        {
-            // Switch to preview tabs
-            if (HasGeneratedVideos())
-            {
-                tabControl.SelectedIndex = 1; // Switch to Full Video tab
-            }
         }
 
         private void btnExport_Click(object sender, EventArgs e)

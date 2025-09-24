@@ -478,7 +478,6 @@ namespace iviewer
         {
             btnGenerateAll.Enabled = dgvPrompts.Rows.Count > 0;
             btnExtractLast.Enabled = HasGeneratedVideos() && dgvPrompts.SelectedRows.Count > 0;
-            btnPreview.Enabled = HasGeneratedVideos();
             btnExport.Enabled = HasGeneratedVideos();
         }
 
