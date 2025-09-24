@@ -281,9 +281,11 @@ namespace iviewer.Services
 
         private async Task ExportMetadataAsync(List<VideoClipInfo> clipInfos, string metaPath)
         {
+            var source = clipInfos.FirstOrDefault(c => Guid.TryParse(c.Source, out _))?.Source;
+
             var jsonData = new
             {
-                Source = Guid.NewGuid(),
+                Source = Guid.TryParse(source, out _) ? Guid.Parse(source) : Guid.NewGuid(),
                 ClipInfos = clipInfos
             };
 
@@ -302,7 +304,8 @@ namespace iviewer.Services
                 Prompt = rowData.Prompt,
                 Resolution = resolution,
                 Duration = VideoUtils.GetVideoDuration(rowData.VideoPath),
-                RowIndex = rowIndex
+                RowIndex = rowIndex,
+                Source = Path.GetFileNameWithoutExtension(rowData.ImagePath)
             };
 
             if (!string.IsNullOrEmpty(rowData.WorkflowJson))
