@@ -4,6 +4,7 @@ using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.Drawing;
 using System.IO;
 using System.Linq;
@@ -614,9 +615,13 @@ namespace iviewer.Helpers
         {
             double totalAspect = 0;
             int count = 0;
+            var startingWidth = 0;
+            var startingHeight = 0;
 
             using (var startImg = System.Drawing.Image.FromFile(imagePath))
             {
+                startingWidth = startImg.Width;
+                startingHeight = startImg.Height;
                 totalAspect += (double)startImg.Width / startImg.Height;
                 count++;
             }
@@ -637,6 +642,8 @@ namespace iviewer.Helpers
             int targetWidth = (int)Math.Ceiling(sqrtPixels / 16.0) * 16;
             int targetHeight = (int)Math.Ceiling((targetWidth / aspectRatio) / 16.0) * 16;
 
+            Debug.Print($"Resolution: {startingWidth}x{startingHeight} => {targetWidth}x{targetHeight}");
+
             return (targetWidth, targetHeight);
         }
     }
@@ -646,8 +653,7 @@ namespace iviewer.Helpers
         public static FlowLayoutPanel CreateVideoButtonsPanel(
             List<string> videoPaths,
             List<VideoClipInfo> clipInfos,
-            Action<int, string> onVideoClick,
-            Action<int> onRegenClick)
+            Action<int, string> onVideoClick)
         {
             var flowPanel = new FlowLayoutPanel
             {
@@ -674,19 +680,7 @@ namespace iviewer.Helpers
                 };
                 btnPlay.Click += (s, e) => onVideoClick(currentIndex, videoPaths[currentIndex]);
 
-                var btnRegen = new Button
-                {
-                    Text = "Regen",
-                    Width = 60,
-                    Height = 50,
-                    Margin = new Padding(5),
-                    Tag = i,
-                    Enabled = info.RowIndex >= 0
-                };
-                btnRegen.Click += (s, e) => onRegenClick(info.RowIndex);
-
                 flowPanel.Controls.Add(btnPlay);
-                flowPanel.Controls.Add(btnRegen);
             }
 
             return flowPanel;

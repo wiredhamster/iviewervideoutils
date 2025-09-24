@@ -288,8 +288,7 @@ namespace iviewer
             var flowPanel = VideoPlayerHelper.CreateVideoButtonsPanel(
                 validVideos,
                 GenerateClipInfos(),
-                OnVideoButtonClick,
-                OnRegenButtonClick);
+                OnVideoButtonClick);
 
             // Clear and re-add controls to per-prompt tab
             tabPagePerPrompt.Controls.Clear();
@@ -331,12 +330,6 @@ namespace iviewer
         private void OnVideoButtonClick(int videoIndex, string videoPath)
         {
             LoadVideoInPlayer(videoPlayerPerPrompt, videoPath, ref _perPromptStream);
-        }
-
-        private void OnRegenButtonClick(int rowIndex)
-        {
-            tabControl.SelectedIndex = 0; // Switch to generation tab
-            SelectAndGenerateRow(rowIndex);
         }
 
         #endregion
