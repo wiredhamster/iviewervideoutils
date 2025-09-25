@@ -263,12 +263,11 @@ namespace iviewer
             // 
             // btnPlayAll
             // 
-            btnPlayAll = new Button();
             btnPlayAll.Anchor = AnchorStyles.Top | AnchorStyles.Right;
-            btnPlayAll.Location = new Point(674, 6); // Position it before Import button
+            btnPlayAll.Location = new Point(674, 6);
             btnPlayAll.Name = "btnPlayAll";
             btnPlayAll.Size = new Size(100, 23);
-            btnPlayAll.TabIndex = 9;
+            btnPlayAll.TabIndex = 6;
             btnPlayAll.Text = "Play All";
             btnPlayAll.UseVisualStyleBackColor = true;
             btnPlayAll.Click += btnPlayAll_Click;
