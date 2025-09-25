@@ -246,7 +246,11 @@ namespace iviewer.Services
             try
             {
                 onProgress(25);
-                bool success = await VideoUtils.StitchVideosAsync(exportData.VideoPaths, stitchedPath);
+                bool success = await VideoUtils.StitchVideosWithTransitionsAsync(
+                    exportData.VideoPaths, 
+                    stitchedPath,
+                    exportData.TransitionType,
+                    exportData.TransitionDurations);
 
                 if (!success)
                 {
@@ -705,6 +709,8 @@ namespace iviewer.Helpers
             List<string> videoPaths,
             List<VideoClipInfo> clipInfos,
             Action<int, string> onVideoClick,
+            List<double> transitionDurations,
+            Action<int, double> onTransitionDurationChanged,
             List<Button> buttonTracker = null)
         {
             var flowPanel = new FlowLayoutPanel
@@ -736,6 +742,30 @@ namespace iviewer.Helpers
 
                 // Add to tracker if provided
                 buttonTracker?.Add(btnPlay);
+
+                // Add transition duration control (except for the last clip)
+                if (i < videoPaths.Count - 1)
+                {
+                    var txtDuration = new TextBox
+                    {
+                        Size = new Size(40, 20),
+                        Text = "0"
+                    };
+
+                    txtDuration.TextChanged += (s, e) => {
+                        if (double.TryParse(txtDuration.Text, out double newDuration) && newDuration >= 0 && newDuration <= 5)
+                        {
+                            onTransitionDurationChanged(currentIndex, newDuration);
+                            txtDuration.BackColor = Color.White;
+                        }
+                        else
+                        {
+                            txtDuration.BackColor = Color.LightPink;
+                        }
+                    };
+
+                    flowPanel.Controls.Add(txtDuration);
+                }
             }
 
             return flowPanel;

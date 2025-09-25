@@ -35,6 +35,11 @@ namespace iviewer
         private List<Button> _videoButtons = new List<Button>(); // Track video buttons for highlighting
         private Button _currentlyHighlightedButton = null;
 
+        // Transition settings - modify these to experiment with different types
+        public const string TRANSITION_TYPE = "fade"; // Options: "fade", "dissolve", "wipe", "slide"
+        private const double DEFAULT_TRANSITION_DURATION = 0; // Default duration in seconds
+        private List<double> _transitionDurations = new List<double>();
+
         private enum GenerationStatus
         {
             Idle,
@@ -94,6 +99,7 @@ namespace iviewer
             _rowImagePaths.Add("");
             _perPromptVideoPaths.Add("");
             _rowWorkflows.Add("");
+            _transitionDurations.Add(DEFAULT_TRANSITION_DURATION);
 
             // Set initial status
             UpdateRowGenerationStatus(rowIndex);
@@ -144,6 +150,7 @@ namespace iviewer
                 {
                     _perPromptVideoPaths[rowIndex] = videoPath;
                     _rowWorkflows[rowIndex] = rowData.WorkflowJson;
+                    _tempFiles.Add(videoPath);
                     UpdateRowStatus(rowIndex, "Generated");
                     RefreshPreviewIfOpen();
                 }
@@ -177,6 +184,8 @@ namespace iviewer
                     OnRowStatusUpdate,
                     OnProgressUpdate,
                     OnRowImageUpdate);
+
+                _tempFiles.AddRange(_perPromptVideoPaths);
             }
             catch (Exception ex)
             {
@@ -269,6 +278,12 @@ namespace iviewer
                 _perPromptVideoPaths.RemoveAt(rowIndex);
                 _rowWorkflows.RemoveAt(rowIndex);
 
+                // Remove transition duration (but keep at least one)
+                if (_transitionDurations.Count > 1)
+                {
+                    _transitionDurations.RemoveAt(rowIndex);
+                }
+
                 UpdateUI();
             }
         }
@@ -349,41 +364,36 @@ namespace iviewer
         {
             _videoButtons.Clear();
 
+            EnsureTransitionDurationsPopulated();
+
             var flowPanel = VideoPlayerHelper.CreateVideoButtonsPanel(
                 validVideos,
                 GenerateClipInfos(),
                 OnVideoButtonClick,
+                _transitionDurations,
+                OnTransitionDurationChanged,
                 _videoButtons);
 
-            // Clear and re-add controls to per-prompt tab
-            //tabPagePerPrompt.Controls.Clear();
-            //tabPagePerPrompt.Controls.Add(videoPlayerPerPrompt);
-            //tabPagePerPrompt.Controls.Add(btnExport);
-            //tabPagePerPrompt.Controls.Add(btnImport);
-            //tabPagePerPrompt.Controls.Add(flowPanel);
-            //videoPlayerPerPrompt.BringToFront();
-            //btnExport.BringToFront();
-            //btnImport.BringToFront();
+			// Configure flow panel to not overlap buttons
+			flowPanel.Anchor = AnchorStyles.Left | AnchorStyles.Right | AnchorStyles.Bottom;
+			flowPanel.Location = new Point(3, tabPagePerPrompt.Height - 200);
+			flowPanel.Size = new Size(986, 165);
+			flowPanel.AutoScroll = true;
 
-            // Configure flow panel to not overlap buttons
-            flowPanel.Anchor = AnchorStyles.Left | AnchorStyles.Right | AnchorStyles.Bottom;
-            flowPanel.Location = new Point(3, tabPagePerPrompt.Height - 200);
-            flowPanel.Size = new Size(986, 165);
-            flowPanel.AutoScroll = true;
+			// Clear existing dynamic controls but keep the buttons and video player
+			var controlsToRemove = tabPagePerPrompt.Controls.OfType<Control>()
+				.Where(c => c != videoPlayerPerPrompt && c != btnExport && c != btnImport && c != btnPlayAll)
+				.ToList();
 
-            // Clear existing dynamic controls but keep the buttons and video player
-            var controlsToRemove = tabPagePerPrompt.Controls.OfType<Control>()
-                .Where(c => c != videoPlayerPerPrompt && c != btnExport && c != btnImport && c != btnPlayAll)
-                .ToList();
+			foreach (var control in controlsToRemove)
+			{
+				tabPagePerPrompt.Controls.Remove(control);
+				control.Dispose();
+			}
 
-            foreach (var control in controlsToRemove)
-            {
-                tabPagePerPrompt.Controls.Remove(control);
-                control.Dispose();
-            }
-
-            // Add the flow panel
-            tabPagePerPrompt.Controls.Add(flowPanel);
+			// Add the flow panel
+			tabPagePerPrompt.Controls.Add(flowPanel);
+			videoPlayerPerPrompt.BringToFront();
 
             // Ensure buttons are visible and positioned correctly
             btnExport.BringToFront();
@@ -392,6 +402,31 @@ namespace iviewer
 
             // Adjust video player size to accommodate flow panel
             videoPlayerPerPrompt.Size = new Size(986, tabPagePerPrompt.Height - 235);
+        }
+
+        private void OnTransitionDurationChanged(int clipIndex, double duration)
+        {
+            if (clipIndex >= 0 && clipIndex < _transitionDurations.Count)
+            {
+                _transitionDurations[clipIndex] = duration;
+            }
+        }
+
+        private void EnsureTransitionDurationsPopulated()
+        {
+            int validVideoCount = _perPromptVideoPaths.Count(p => !string.IsNullOrEmpty(p) && File.Exists(p));
+
+            // Ensure we have enough transition duration entries
+            while (_transitionDurations.Count < validVideoCount)
+            {
+                _transitionDurations.Add(DEFAULT_TRANSITION_DURATION);
+            }
+
+            // Remove excess entries if we have too many
+            while (_transitionDurations.Count > validVideoCount)
+            {
+                _transitionDurations.RemoveAt(_transitionDurations.Count - 1);
+            }
         }
 
         private void LoadVideoInPlayer(VideoPlayerControl player, string videoPath, ref FileStream streamRef)
@@ -473,6 +508,8 @@ namespace iviewer
                 {
                     VideoPaths = _perPromptVideoPaths.Where(p => !string.IsNullOrEmpty(p) && File.Exists(p)).ToList(),
                     ClipInfos = GenerateClipInfos(),
+                    TransitionType = TRANSITION_TYPE,
+                    TransitionDurations = _transitionDurations.Take(_perPromptVideoPaths.Count(p => !string.IsNullOrEmpty(p))).ToList(),
                     ExportTimestamp = DateTime.Now
                 };
 
@@ -508,6 +545,7 @@ namespace iviewer
                     _perPromptVideoPaths.Add(imported[i]);
                     _rowImagePaths.Add("");
                     _rowWorkflows.Add("");
+                    _transitionDurations.Add(DEFAULT_TRANSITION_DURATION);
 
                     // Add grid row
                     int rowIndex = dgvPrompts.Rows.Add();
@@ -1156,6 +1194,8 @@ namespace iviewer
     {
         public List<string> VideoPaths { get; set; } = new();
         public List<VideoClipInfo> ClipInfos { get; set; } = new();
+        public string TransitionType { get; set; } = "fade"; // Single transition type for all clips
+        public List<double> TransitionDurations { get; set; } = new(); // Duration per transition
         public DateTime ExportTimestamp { get; set; }
     }
 
