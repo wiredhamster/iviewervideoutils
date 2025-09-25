@@ -47,6 +47,7 @@ namespace iviewer
             btnGenerateAll = new Button();
             btnDeleteRow = new Button();
             btnAddRow = new Button();
+            btnPlayAll = new Button();
             lblResolution = new Label();
             tabPagePerPrompt = new TabPage();
             tabPageFullVideo = new TabPage();
@@ -229,6 +230,7 @@ namespace iviewer
             // 
             tabPagePerPrompt.Controls.Add(btnExport);
             tabPagePerPrompt.Controls.Add(btnImport);
+            tabPagePerPrompt.Controls.Add(btnPlayAll);
             tabPagePerPrompt.Location = new Point(4, 24);
             tabPagePerPrompt.Name = "tabPagePerPrompt";
             tabPagePerPrompt.Padding = new Padding(3);
@@ -258,6 +260,18 @@ namespace iviewer
             btnImport.Text = "Import Videos";
             btnImport.UseVisualStyleBackColor = true;
             btnImport.Click += btnImport_Click;
+            // 
+            // btnPlayAll
+            // 
+            btnPlayAll = new Button();
+            btnPlayAll.Anchor = AnchorStyles.Top | AnchorStyles.Right;
+            btnPlayAll.Location = new Point(674, 6); // Position it before Import button
+            btnPlayAll.Name = "btnPlayAll";
+            btnPlayAll.Size = new Size(100, 23);
+            btnPlayAll.TabIndex = 9;
+            btnPlayAll.Text = "Play All";
+            btnPlayAll.UseVisualStyleBackColor = true;
+            btnPlayAll.Click += btnPlayAll_Click;
             // 
             // VideoGenerator
             // 
@@ -299,6 +313,7 @@ namespace iviewer
         // Preview tab controls
         private Button btnExport;
         private Button btnImport;
+        private Button btnPlayAll;
 
         // Video players (created programmatically)
         private VideoPlayerControl videoPlayerFull;
@@ -353,9 +368,8 @@ namespace iviewer
             // 
             // videoPlayerPerPrompt
             // 
-            videoPlayerPerPrompt.Dock = DockStyle.Top;
-            videoPlayerPerPrompt.Height = 400;
-            videoPlayerPerPrompt.Location = new Point(3, 28);
+            videoPlayerPerPrompt.Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right | AnchorStyles.Bottom;
+            videoPlayerPerPrompt.Location = new Point(3, 35); // Start below the button row
             videoPlayerPerPrompt.Name = "videoPlayerPerPrompt";
             videoPlayerPerPrompt.Size = new Size(986, 400);
             videoPlayerPerPrompt.TabIndex = 0;
@@ -364,6 +378,11 @@ namespace iviewer
             // Add to respective tab pages
             tabPageFullVideo.Controls.Add(videoPlayerFull);
             tabPagePerPrompt.Controls.Add(videoPlayerPerPrompt);
+        }
+
+        private void btnPlayAll_Click(object sender, EventArgs e)
+        {
+            StartPlayAllSequence();
         }
     }
 }

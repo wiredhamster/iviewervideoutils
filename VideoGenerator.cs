@@ -28,6 +28,13 @@ namespace iviewer
         private FileStream _fullStream;
         private FileStream _perPromptStream;
 
+        // Play all videos
+        private bool _isPlayingAll = false;
+        private int _currentPlayAllIndex = 0;
+        private List<string> _playAllVideos = new List<string>();
+        private List<Button> _videoButtons = new List<Button>(); // Track video buttons for highlighting
+        private Button _currentlyHighlightedButton = null;
+
         private enum GenerationStatus
         {
             Idle,
@@ -168,7 +175,8 @@ namespace iviewer
                     _perPromptVideoPaths,
                     _rowWorkflows,
                     OnRowStatusUpdate,
-                    OnProgressUpdate);
+                    OnProgressUpdate,
+                    OnRowImageUpdate);
             }
             catch (Exception ex)
             {
@@ -176,6 +184,41 @@ namespace iviewer
             }
 
             UpdateUI();
+        }
+
+        private void OnRowImageUpdate(int rowIndex, string imagePath)
+        {
+            if (InvokeRequired)
+            {
+                Invoke(new Action(() => OnRowImageUpdate(rowIndex, imagePath)));
+                return;
+            }
+
+            try
+            {
+                if (rowIndex >= 0 && rowIndex < dgvPrompts.Rows.Count)
+                {
+                    // Create and set thumbnail
+                    var thumbnail = ImageHelper.CreateThumbnail(imagePath, 160, 160);
+                    dgvPrompts.Rows[rowIndex].Cells["colImage"].Value = thumbnail;
+
+                    // Refresh the grid to show the change
+                    dgvPrompts.InvalidateRow(rowIndex);
+                    dgvPrompts.Refresh();
+
+                    // Also update the resolution label if this is the first image
+                    if (rowIndex == 0 || string.IsNullOrEmpty(lblResolution.Text) || lblResolution.Text == "N/A")
+                    {
+                        var (width, height) = ResolutionCalculator.Calculate(imagePath);
+                        lblResolution.Text = $"{width}x{height}";
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                // Log error but don't stop generation process
+                Console.WriteLine($"Error updating thumbnail for row {rowIndex}: {ex.Message}");
+            }
         }
 
         private VideoRowData GetRowData(int rowIndex)
@@ -237,12 +280,16 @@ namespace iviewer
             int rowIndex = dgvPrompts.SelectedRows[0].Index;
             string videoPath = _perPromptVideoPaths[rowIndex];
 
-            if (string.IsNullOrEmpty(videoPath) || !File.Exists(videoPath)) return;
+            if (string.IsNullOrEmpty(videoPath) || !File.Exists(videoPath))
+            {
+                MessageBox.Show("No video file found for selected row.");
+                return;
+            }
 
             try
             {
                 string framePath = VideoUtils.ExtractLastFrame(videoPath, _fileService.TempDir);
-                if (!string.IsNullOrEmpty(framePath))
+                if (!string.IsNullOrEmpty(framePath) && File.Exists(framePath))
                 {
                     // Determine target row (next row if exists, otherwise current)
                     int targetRow = rowIndex + 1 < _rowImagePaths.Count ? rowIndex + 1 : rowIndex;
@@ -250,12 +297,27 @@ namespace iviewer
                     _rowImagePaths[targetRow] = framePath;
                     _tempFiles.Add(framePath);
 
-                    // Update thumbnail in grid
-                    var thumbnail = ImageHelper.CreateThumbnail(framePath, 160, 160);
-                    dgvPrompts.Rows[targetRow].Cells["colImage"].Value = thumbnail;
+                    // Update thumbnail in grid with error handling
+                    try
+                    {
+                        var thumbnail = ImageHelper.CreateThumbnail(framePath, 160, 160);
+                        dgvPrompts.Rows[targetRow].Cells["colImage"].Value = thumbnail;
+
+                        // Force refresh of the specific row
+                        dgvPrompts.InvalidateRow(targetRow);
+                        dgvPrompts.Refresh();
+                    }
+                    catch (Exception thumbnailEx)
+                    {
+                        MessageBox.Show($"Frame extracted but thumbnail update failed: {thumbnailEx.Message}");
+                    }
 
                     UpdateUI();
                     MessageBox.Show($"Last frame extracted to row {targetRow + 1}.");
+                }
+                else
+                {
+                    MessageBox.Show("Failed to extract frame or frame file not created.");
                 }
             }
             catch (Exception ex)
@@ -285,20 +347,51 @@ namespace iviewer
 
         private void LoadPerPromptVideosTab(List<string> validVideos)
         {
+            _videoButtons.Clear();
+
             var flowPanel = VideoPlayerHelper.CreateVideoButtonsPanel(
                 validVideos,
                 GenerateClipInfos(),
-                OnVideoButtonClick);
+                OnVideoButtonClick,
+                _videoButtons);
 
             // Clear and re-add controls to per-prompt tab
-            tabPagePerPrompt.Controls.Clear();
-            tabPagePerPrompt.Controls.Add(videoPlayerPerPrompt);
-            tabPagePerPrompt.Controls.Add(btnExport);
-            tabPagePerPrompt.Controls.Add(btnImport);
+            //tabPagePerPrompt.Controls.Clear();
+            //tabPagePerPrompt.Controls.Add(videoPlayerPerPrompt);
+            //tabPagePerPrompt.Controls.Add(btnExport);
+            //tabPagePerPrompt.Controls.Add(btnImport);
+            //tabPagePerPrompt.Controls.Add(flowPanel);
+            //videoPlayerPerPrompt.BringToFront();
+            //btnExport.BringToFront();
+            //btnImport.BringToFront();
+
+            // Configure flow panel to not overlap buttons
+            flowPanel.Anchor = AnchorStyles.Left | AnchorStyles.Right | AnchorStyles.Bottom;
+            flowPanel.Location = new Point(3, tabPagePerPrompt.Height - 200);
+            flowPanel.Size = new Size(986, 165);
+            flowPanel.AutoScroll = true;
+
+            // Clear existing dynamic controls but keep the buttons and video player
+            var controlsToRemove = tabPagePerPrompt.Controls.OfType<Control>()
+                .Where(c => c != videoPlayerPerPrompt && c != btnExport && c != btnImport && c != btnPlayAll)
+                .ToList();
+
+            foreach (var control in controlsToRemove)
+            {
+                tabPagePerPrompt.Controls.Remove(control);
+                control.Dispose();
+            }
+
+            // Add the flow panel
             tabPagePerPrompt.Controls.Add(flowPanel);
-            videoPlayerPerPrompt.BringToFront();
+
+            // Ensure buttons are visible and positioned correctly
             btnExport.BringToFront();
             btnImport.BringToFront();
+            btnPlayAll.BringToFront();
+
+            // Adjust video player size to accommodate flow panel
+            videoPlayerPerPrompt.Size = new Size(986, tabPagePerPrompt.Height - 235);
         }
 
         private void LoadVideoInPlayer(VideoPlayerControl player, string videoPath, ref FileStream streamRef)
@@ -329,6 +422,38 @@ namespace iviewer
 
         private void OnVideoButtonClick(int videoIndex, string videoPath)
         {
+            // If playing all, stop the sequence
+            if (_isPlayingAll)
+            {
+                StopPlayAllSequence();
+            }
+
+            // Reset all highlights since user manually selected a video
+            ResetAllVideoButtonHighlights();
+
+            // Temporarily highlight the selected button
+            if (videoIndex < _videoButtons.Count && _videoButtons[videoIndex] != null)
+            {
+                var button = _videoButtons[videoIndex];
+                button.BackColor = Color.LightYellow;
+                button.ForeColor = Color.DarkOrange;
+
+                // Reset after a short delay
+                Task.Delay(1500).ContinueWith(_ =>
+                {
+                    if (InvokeRequired)
+                    {
+                        Invoke(new Action(() =>
+                        {
+                            if (!_isPlayingAll) // Only reset if not playing all
+                            {
+                                ResetAllVideoButtonHighlights();
+                            }
+                        }));
+                    }
+                });
+            }
+
             LoadVideoInPlayer(videoPlayerPerPrompt, videoPath, ref _perPromptStream);
         }
 
@@ -536,6 +661,12 @@ namespace iviewer
         {
             if (tabControl.SelectedIndex == 0) // Generation tab
             {
+                // Stop play all and reset highlights
+                if (_isPlayingAll)
+                {
+                    StopPlayAllSequence();
+                }
+
                 // Stop and dispose video players when switching to generation
                 videoPlayerFull?.StopAndHide();
                 videoPlayerPerPrompt?.StopAndHide();
@@ -831,6 +962,153 @@ namespace iviewer
             {
                 UpdateRowGenerationStatus(i);
             }
+        }
+
+        #endregion
+
+        #region Play All Feature
+
+        private void StartPlayAllSequence()
+        {
+            if (_isPlayingAll)
+            {
+                StopPlayAllSequence();
+                return;
+            }
+
+            _playAllVideos = _perPromptVideoPaths.Where(p => !string.IsNullOrEmpty(p) && File.Exists(p)).ToList();
+
+            if (_playAllVideos.Count == 0)
+            {
+                MessageBox.Show("No videos to play.");
+                return;
+            }
+
+            _isPlayingAll = true;
+            _currentPlayAllIndex = 0;
+            btnPlayAll.Text = "Stop All";
+            btnPlayAll.BackColor = Color.LightCoral;
+
+            PlayNextVideoInSequence();
+        }
+
+        private void StopPlayAllSequence()
+        {
+            _isPlayingAll = false;
+
+            btnPlayAll.Text = "Play All";
+            btnPlayAll.BackColor = SystemColors.Control;
+
+            // Reset all button highlights
+            ResetAllVideoButtonHighlights();
+
+            // Stop current video
+            videoPlayerPerPrompt?.StopAndHide();
+        }
+
+        private async void PlayNextVideoInSequence()
+        {
+            if (!_isPlayingAll || _currentPlayAllIndex >= _playAllVideos.Count)
+            {
+                // Sequence complete
+                StopPlayAllSequence();
+                return;
+            }
+
+            string videoPath = _playAllVideos[_currentPlayAllIndex];
+
+            try
+            {
+                // Update button to show current progress
+                btnPlayAll.Text = $"Playing {_currentPlayAllIndex + 1}/{_playAllVideos.Count}";
+
+                // Highlight the current video button
+                HighlightCurrentVideoButton(_currentPlayAllIndex);
+
+                // Load and play the video
+                LoadVideoInPlayer(videoPlayerPerPrompt, videoPath, ref _perPromptStream);
+
+                // Get video duration and wait for it to complete
+                double videoDuration = VideoUtils.GetVideoDuration(videoPath);
+
+                // Wait for video to complete (with small buffer)
+                await Task.Delay(TimeSpan.FromSeconds(videoDuration + 0.2));
+
+                // Move to next video if still playing all
+                if (_isPlayingAll)
+                {
+                    _currentPlayAllIndex++;
+                    PlayNextVideoInSequence();
+                }
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show($"Error playing video {Path.GetFileName(videoPath)}: {ex.Message}");
+                // Skip to next video
+                if (_isPlayingAll)
+                {
+                    _currentPlayAllIndex++;
+                    PlayNextVideoInSequence();
+                }
+            }
+        }
+
+        private void HighlightCurrentVideoButton(int videoIndex)
+        {
+            // Reset previous highlight
+            ResetAllVideoButtonHighlights();
+
+            // Find and highlight the current button
+            if (videoIndex < _videoButtons.Count && _videoButtons[videoIndex] != null)
+            {
+                var button = _videoButtons[videoIndex];
+                _currentlyHighlightedButton = button;
+
+                // Store original colors if not already stored
+                if (button.Tag == null)
+                {
+                    button.Tag = new ButtonColors
+                    {
+                        BackColor = button.BackColor,
+                        ForeColor = button.ForeColor
+                    };
+                }
+
+                // Apply highlight colors
+                button.BackColor = Color.LightBlue;
+                button.ForeColor = Color.DarkBlue;
+                button.Font = new Font(button.Font, FontStyle.Bold);
+            }
+        }
+
+        private void ResetAllVideoButtonHighlights()
+        {
+            foreach (var button in _videoButtons.Where(b => b != null))
+            {
+                // Restore original colors
+                if (button.Tag is ButtonColors originalColors)
+                {
+                    button.BackColor = originalColors.BackColor;
+                    button.ForeColor = originalColors.ForeColor;
+                }
+                else
+                {
+                    // Fallback to default colors
+                    button.BackColor = SystemColors.Control;
+                    button.ForeColor = SystemColors.ControlText;
+                }
+
+                button.Font = new Font(button.Font, FontStyle.Regular);
+            }
+
+            _currentlyHighlightedButton = null;
+        }
+
+        // Helper class to store original button colors
+        private class ButtonColors
+        {
+            public Color BackColor { get; set; }
+            public Color ForeColor { get; set; }
         }
 
         #endregion

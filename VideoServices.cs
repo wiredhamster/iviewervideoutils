@@ -53,7 +53,8 @@ namespace iviewer.Services
             List<string> perPromptVideoPaths,
             List<string> rowWorkflows,
             Action<int, string> onRowStatusUpdate,
-            Action<int> onProgressUpdate)
+            Action<int> onProgressUpdate,
+            Action<int, string> onRowImageUpdate = null)
         {
             string prevVideoPath = null;
 
@@ -69,6 +70,8 @@ namespace iviewer.Services
                     {
                         rowData.ImagePath = extractedFrame;
                         rowImagePaths[i] = extractedFrame;
+
+                        onRowImageUpdate?.Invoke(i, extractedFrame);
                     }
                 }
 
@@ -601,14 +604,59 @@ namespace iviewer.Helpers
     {
         public static Bitmap CreateThumbnail(string imagePath, int width, int height)
         {
-            using var originalImage = System.Drawing.Image.FromFile(imagePath);
-            var thumbnail = new Bitmap(width, height);
+            try
+            {
+                if (!File.Exists(imagePath))
+                {
+                    throw new FileNotFoundException($"Image file not found: {imagePath}");
+                }
 
-            using var graphics = Graphics.FromImage(thumbnail);
-            graphics.InterpolationMode = System.Drawing.Drawing2D.InterpolationMode.HighQualityBicubic;
-            graphics.DrawImage(originalImage, new Rectangle(0, 0, width, height));
+                using var originalImage = System.Drawing.Image.FromFile(imagePath);
+                var thumbnail = new Bitmap(width, height);
 
-            return thumbnail;
+                using var graphics = Graphics.FromImage(thumbnail);
+                graphics.InterpolationMode = System.Drawing.Drawing2D.InterpolationMode.HighQualityBicubic;
+                graphics.SmoothingMode = System.Drawing.Drawing2D.SmoothingMode.HighQuality;
+                graphics.CompositingQuality = System.Drawing.Drawing2D.CompositingQuality.HighQuality;
+
+                // Calculate aspect ratio to maintain proportions
+                float sourceAspect = (float)originalImage.Width / originalImage.Height;
+                float destAspect = (float)width / height;
+
+                int drawWidth, drawHeight, drawX, drawY;
+
+                if (sourceAspect > destAspect)
+                {
+                    // Source is wider - fit to width
+                    drawWidth = width;
+                    drawHeight = (int)(width / sourceAspect);
+                    drawX = 0;
+                    drawY = (height - drawHeight) / 2;
+                }
+                else
+                {
+                    // Source is taller - fit to height
+                    drawHeight = height;
+                    drawWidth = (int)(height * sourceAspect);
+                    drawY = 0;
+                    drawX = (width - drawWidth) / 2;
+                }
+
+                graphics.Clear(Color.White); // Set background color
+                graphics.DrawImage(originalImage, new Rectangle(drawX, drawY, drawWidth, drawHeight));
+
+                return thumbnail;
+            }
+            catch (Exception ex)
+            {
+                // Return a placeholder thumbnail on error
+                var errorThumbnail = new Bitmap(width, height);
+                using var graphics = Graphics.FromImage(errorThumbnail);
+                graphics.Clear(Color.LightGray);
+                graphics.DrawString("Error", SystemFonts.DefaultFont, Brushes.Red, 10, height / 2 - 10);
+                Console.WriteLine($"Error creating thumbnail for {imagePath}: {ex.Message}");
+                return errorThumbnail;
+            }
         }
     }
 
@@ -656,7 +704,8 @@ namespace iviewer.Helpers
         public static FlowLayoutPanel CreateVideoButtonsPanel(
             List<string> videoPaths,
             List<VideoClipInfo> clipInfos,
-            Action<int, string> onVideoClick)
+            Action<int, string> onVideoClick,
+            List<Button> buttonTracker = null)
         {
             var flowPanel = new FlowLayoutPanel
             {
@@ -684,6 +733,9 @@ namespace iviewer.Helpers
                 btnPlay.Click += (s, e) => onVideoClick(currentIndex, videoPaths[currentIndex]);
 
                 flowPanel.Controls.Add(btnPlay);
+
+                // Add to tracker if provided
+                buttonTracker?.Add(btnPlay);
             }
 
             return flowPanel;
