@@ -30,13 +30,13 @@ namespace iviewer.Services
             Directory.CreateDirectory(_config.TempDir);
         }
 
-        public async Task<string> GenerateVideoAsync(VideoRowData rowData, int rowIndex)
+        public async Task<string> GenerateVideoAsync(VideoRowData rowData, int rowIndex, int width, int height)
         {
             string selectedWorkflow = string.IsNullOrEmpty(rowData.EndImagePath)
                 ? _config.WorkflowPath
                 : _config.WorkflowPathLast;
 
-            string workflowJson = await PrepareWorkflowAsync(selectedWorkflow, rowData);
+            string workflowJson = await PrepareWorkflowAsync(selectedWorkflow, rowData, width, height);
             string videoPath = await ExecuteWorkflowAsync(workflowJson, rowData, rowIndex);
 
             if (!string.IsNullOrEmpty(videoPath))
@@ -54,6 +54,8 @@ namespace iviewer.Services
             List<string> rowWorkflows,
             Action<int, string> onRowStatusUpdate,
             Action<int> onProgressUpdate,
+            int width,
+            int height,
             Action<int, string> onRowImageUpdate = null)
         {
             string prevVideoPath = null;
@@ -81,7 +83,7 @@ namespace iviewer.Services
 
                     try
                     {
-                        string videoPath = await GenerateVideoAsync(rowData, i);
+                        string videoPath = await GenerateVideoAsync(rowData, i, width, height);
                         if (!string.IsNullOrEmpty(videoPath))
                         {
                             perPromptVideoPaths[i] = videoPath;
@@ -106,10 +108,14 @@ namespace iviewer.Services
             }
         }
 
-        private async Task<string> PrepareWorkflowAsync(string workflowPath, VideoRowData rowData)
+        private async Task<string> PrepareWorkflowAsync(string workflowPath, VideoRowData rowData, int width, int height)
         {
             string workflowJson = await File.ReadAllTextAsync(workflowPath);
-            var (width, height) = ResolutionCalculator.Calculate(rowData.ImagePath, rowData.EndImagePath);
+
+            if (width == 0 || height == 0)
+            {
+                (width, height) = ResolutionCalculator.Calculate(rowData.ImagePath);
+            }
 
             // Upload images and get server filenames
             string startFilename = await UploadImageAsync(rowData.ImagePath);
@@ -667,9 +673,9 @@ namespace iviewer.Helpers
 
     public static class ResolutionCalculator
     {
-        public static (int Width, int Height) Calculate(string imagePath, string endImagePath = null)
+        public static (int Width, int Height) Calculate(string imagePath)
         {
-            double totalAspect = 0;
+            double aspectRatio = 0;
             int count = 0;
             var startingWidth = 0;
             var startingHeight = 0;
@@ -678,20 +684,9 @@ namespace iviewer.Helpers
             {
                 startingWidth = startImg.Width;
                 startingHeight = startImg.Height;
-                totalAspect += (double)startImg.Width / startImg.Height;
-                count++;
+                aspectRatio = (double)startImg.Width / startImg.Height;
             }
 
-            if (!string.IsNullOrEmpty(endImagePath))
-            {
-                using (var endImg = System.Drawing.Image.FromFile(endImagePath))
-                {
-                    totalAspect += (double)endImg.Width / endImg.Height;
-                    count++;
-                }
-            }
-
-            double aspectRatio = totalAspect / count;
             int targetPixels = 720 * 512;
             double sqrtPixels = Math.Sqrt(targetPixels * aspectRatio);
 

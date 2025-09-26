@@ -26,6 +26,9 @@ namespace iviewer
         private string _previewVideoPath = null;
         private List<string> _tempFiles = new List<string>();
 
+        private int _width = 0;
+        private int _height = 0;
+
         // Stream references for video players
         private FileStream _fullStream;
         private FileStream _perPromptStream;
@@ -146,7 +149,7 @@ namespace iviewer
 
             try
             {
-                string videoPath = await _generationService.GenerateVideoAsync(rowData, rowIndex);
+                string videoPath = await _generationService.GenerateVideoAsync(rowData, rowIndex, _width, _height);
 
                 if (!string.IsNullOrEmpty(videoPath))
                 {
@@ -185,6 +188,8 @@ namespace iviewer
                     _rowWorkflows,
                     OnRowStatusUpdate,
                     OnProgressUpdate,
+                    _width,
+                    _height,
                     OnRowImageUpdate);
 
                 _tempFiles.AddRange(_perPromptVideoPaths);
@@ -220,8 +225,8 @@ namespace iviewer
                     // Also update the resolution label if this is the first image
                     if (rowIndex == 0 || string.IsNullOrEmpty(lblResolution.Text) || lblResolution.Text == "N/A")
                     {
-                        var (width, height) = ResolutionCalculator.Calculate(imagePath);
-                        lblResolution.Text = $"{width}x{height}";
+                        (_width, _height) = ResolutionCalculator.Calculate(imagePath);
+                        lblResolution.Text = $"{_width}x{_height}";
                     }
                 }
             }
@@ -281,7 +286,7 @@ namespace iviewer
                 _rowWorkflows.RemoveAt(rowIndex);
 
                 // Remove transition duration (but keep at least one)
-                if (_transitionDurations.Count > 1)
+                if (_transitionDurations.Count > rowIndex)
                 {
                     _transitionDurations.RemoveAt(rowIndex);
                 }
@@ -1254,8 +1259,14 @@ namespace iviewer
 
         protected override void OnFormClosing(FormClosingEventArgs e)
         {
-            var action = MessageBox.Show("Delete temporary files?", "Video Generator", MessageBoxButtons.YesNoCancel);
 
+            // Dispose video players and streams
+            videoPlayerFull?.StopAndHide();
+            videoPlayerPerPrompt?.StopAndHide();
+            _fullStream?.Dispose();
+            _perPromptStream?.Dispose();
+
+            var action = MessageBox.Show("Delete temporary files?", "Video Generator", MessageBoxButtons.YesNoCancel);
             if (action == DialogResult.Yes)
             {
                 _fileService.CleanupTempFiles(_tempFiles);
@@ -1265,12 +1276,6 @@ namespace iviewer
                 e.Cancel = true;
                 return;
             }
-
-            // Dispose video players and streams
-            videoPlayerFull?.StopAndHide();
-            videoPlayerPerPrompt?.StopAndHide();
-            _fullStream?.Dispose();
-            _perPromptStream?.Dispose();
 
             base.OnFormClosing(e);
         }

@@ -75,12 +75,30 @@ namespace iviewer
 			mediaPlayer.Play(currentMedia);
 		}
 
-		public void StopAndHide()
+		public async void StopAndHide()
 		{
 			if (mediaPlayer.IsPlaying)
 			{
-				mediaPlayer.Stop();
-			}
+                var stopTask = Task.Run(() =>
+                {
+                    try
+                    {
+                        mediaPlayer.Stop();
+                    }
+                    catch (Exception ex)
+                    {
+                        // Log ex if needed
+                    }
+                });
+
+                // Wait with timeout (e.g., 5 seconds)
+                if (!stopTask.Wait(TimeSpan.FromSeconds(5)))
+                {
+                    // Timeout: Force dispose or handle hang (can't kill VLC thread, but continue app)
+                    // Log "Stop timed out"
+                }
+            }
+
 			currentMedia?.Dispose();
 			currentMedia = null;
 		}

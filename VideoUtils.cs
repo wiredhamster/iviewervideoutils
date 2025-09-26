@@ -359,17 +359,20 @@ namespace iviewer
                     File.Copy(inputVideoPaths[0], outputPath, true);
                     return true;
                 }
+
                 // Check if any transitions
                 bool hasTransitions = transitionDurations?.Any(d => d > 0) == true;
-                if (!hasTransitions || transitionDurations.Count != inputVideoPaths.Count - 1)
+                if (!hasTransitions || transitionDurations.Count < inputVideoPaths.Count - 1)
                 {
                     // Fallback or error
                     return await StitchVideosAsync(inputVideoPaths, outputPath, deleteIntermediateFiles); // Your existing no-transition stitch
                 }
+
                 // Create output dir
                 string outputDir = Path.GetDirectoryName(outputPath);
                 if (!string.IsNullOrEmpty(outputDir) && !Directory.Exists(outputDir))
                     Directory.CreateDirectory(outputDir);
+
                 return await StitchWithUniformTransitions(inputVideoPaths, outputPath, transitionType, transitionDurations);
             }
             catch (Exception ex)
@@ -389,8 +392,7 @@ namespace iviewer
             {
                 var filterParts = new List<string>();
                 var durations = new List<double>();
-                double cumulativeOffset = 0;
-
+                
                 // Probe durations
                 for (int i = 0; i < inputVideoPaths.Count; i++)
                 {
@@ -399,16 +401,19 @@ namespace iviewer
                 }
 
                 string currentLabel = "[0:v]";
+                double cumulativeOffset = durations[0]; // Start with the first clip's duration
+
                 for (int i = 0; i < inputVideoPaths.Count - 1; i++)
                 {
                     double duration = transitionDurations[i];
                     string nextLabel = $"[{i + 1}:v]";
                     string outputLabel = $"[v{i}]";
 
+                    double offset = cumulativeOffset - duration;
+
                     if (duration > 0)
                     {
                         // xfade with correct offset (end of current minus overlap)
-                        double offset = cumulativeOffset + durations[i] - duration;
                         filterParts.Add($"{currentLabel}{nextLabel}xfade=transition={transitionType}:duration={duration}:offset={offset}{outputLabel}");
                     }
                     else
@@ -417,8 +422,8 @@ namespace iviewer
                         filterParts.Add($"{currentLabel}{nextLabel}concat=n=2:v=1:a=0{outputLabel}");
                     }
 
-                    // Update cumulative (full current duration, as overlap is handled in filter)
-                    cumulativeOffset += durations[i];
+                    // Update cumulative (add next clip's net duration)
+                    cumulativeOffset += durations[i + 1] - duration;
                     currentLabel = outputLabel;
                 }
 
@@ -440,6 +445,7 @@ namespace iviewer
                         options.WithCustomArgument($"-map {currentLabel}");
                         options.WithVideoCodec("libx264");
                         options.WithCustomArgument("-an"); // No audio for now
+                        options.WithCustomArgument("-y"); // Overwrite output
                     })
                     .ProcessAsynchronously();
 
@@ -451,6 +457,65 @@ namespace iviewer
                 return false;
             }
         }
+
+        //public static async Task<bool> StitchWithUniformTransitions(List<string> videoPaths, string outputPath, string transitionType, List<double> transitionDurations)
+        //{
+        //    if (videoPaths.Count == 0) return false;
+        //    if (videoPaths.Count == 1)
+        //    {
+        //        File.Copy(videoPaths[0], outputPath, true);
+        //        return true;
+        //    }
+
+        //    // Probe durations for offset calculation
+        //    var durations = new List<double>();
+        //    foreach (var path in videoPaths)
+        //    {
+        //        durations.Add(GetVideoDuration(path));
+        //    }
+
+        //    // Build filter_complex for chained transitions
+        //    var filterComplex = new StringBuilder();
+        //    filterComplex.Append("[0:v]setpts=PTS-STARTPTS[v0];"); // Label first
+        //    double currentOffset = 0;
+        //    for (int i = 1; i < videoPaths.Count; i++)
+        //    {
+        //        filterComplex.Append($"[{i}:v]setpts=PTS-STARTPTS[v{i}];");
+        //        string trans = transitionType switch
+        //        {
+        //            "fade" => $"xfade=transition=fade:duration={transitionDurations[i]}:offset={currentOffset}",
+        //            // Add more: TransitionType.WipeLeft => "xfade=transition=wipeleft:duration={transitionDuration}:offset={currentOffset}"
+        //            _ => throw new NotSupportedException("Unsupported transition type")
+        //        };
+        //        filterComplex.Append($"[v{i - 1}][v{i}]{trans}[tmp{i}];");
+        //        currentOffset += durations[i - 1] - transitionDurations[i]; // Overlap by duration
+        //        if (currentOffset < 0) throw new Exception("Transition duration longer than clip—reduce duration.");
+        //    }
+        //    filterComplex.Append($"[tmp{videoPaths.Count - 1}]setpts=PTS-STARTPTS[outv]"); // Final output
+
+        //    // Run FFmpeg
+        //    var psi = new ProcessStartInfo
+        //    {
+        //        FileName = "ffmpeg",
+        //        Arguments = string.Join(" ", videoPaths.Select((p, i) => $"-i \"{p}\" ")) +
+        //                    $"-filter_complex \"{filterComplex}\" -map \"[outv]\" -c:v libx264 -preset medium -crf 23 \"{outputPath}\" -y",
+        //        RedirectStandardOutput = true,
+        //        RedirectStandardError = true,
+        //        UseShellExecute = false,
+        //        CreateNoWindow = true
+        //    };
+        //    using (var proc = Process.Start(psi))
+        //    {
+        //        await proc.WaitForExitAsync();
+        //        if (proc.ExitCode != 0)
+        //        {
+        //            string error = await proc.StandardError.ReadToEndAsync();
+        //            throw new Exception(error);
+        //        }
+        //    }
+
+        //    return File.Exists(outputPath);
+        //}
 
         public static async Task<bool> StitchVideosAsync(List<string> inputVideoPaths,
             string outputPath,
