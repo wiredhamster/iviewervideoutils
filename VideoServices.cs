@@ -687,7 +687,7 @@ namespace iviewer.Helpers
                 aspectRatio = (double)startImg.Width / startImg.Height;
             }
 
-            int targetPixels = 720 * 512;
+            int targetPixels = 800 * 600;
             double sqrtPixels = Math.Sqrt(targetPixels * aspectRatio);
 
             int targetWidth = (int)Math.Ceiling(sqrtPixels / 16.0) * 16;

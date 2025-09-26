@@ -117,7 +117,7 @@ namespace iviewer
             {
                 return dgvPrompts.Rows[dgvPrompts.Rows.Count - 1].Cells["colPrompt"].Value?.ToString() ?? "";
             }
-            return "A woman posing for a photoshoot. She smiles and sways her body. The camera remains static throughout. The lighting remains static throughout. The background remains static throughout.";
+            return "A woman posing for a photoshoot. She smiles and sways her body. The camera remains static throughout. The lighting remains consistent throughout. The background remains static throughout.";
         }
 
         private void PopulateGridRow(int rowIndex, VideoRowData data)
@@ -149,6 +149,12 @@ namespace iviewer
 
             try
             {
+                if (_width == 0 || _height == 0)
+                {
+                    // Calculate resolution based on first row
+                    (_width, _height) = ResolutionCalculator.Calculate(GetRowData(0).ImagePath);
+                }
+
                 string videoPath = await _generationService.GenerateVideoAsync(rowData, rowIndex, _width, _height);
 
                 if (!string.IsNullOrEmpty(videoPath))
@@ -181,8 +187,14 @@ namespace iviewer
 
             try
             {
+                var allRowData = GetAllRowData();
+                if (_width == 0 || _height == 0)
+                {
+                    (_width, _height) = ResolutionCalculator.Calculate(allRowData.First().ImagePath);
+                }
+
                 await _generationService.GenerateAllVideosAsync(
-                    GetAllRowData(),
+                    allRowData,
                     _rowImagePaths,
                     _perPromptVideoPaths,
                     _rowWorkflows,
