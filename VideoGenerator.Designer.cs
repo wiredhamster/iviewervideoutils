@@ -47,16 +47,18 @@ namespace iviewer
             btnGenerateAll = new Button();
             btnDeleteRow = new Button();
             btnAddRow = new Button();
-            btnPlayAll = new Button();
             lblResolution = new Label();
             tabPagePerPrompt = new TabPage();
+            btnPreview = new Button();
+            btnImport = new Button();
+            btnPlayAll = new Button();
             tabPageFullVideo = new TabPage();
             btnExport = new Button();
-            btnImport = new Button();
             tabControl.SuspendLayout();
             tabPageGeneration.SuspendLayout();
             ((System.ComponentModel.ISupportInitialize)dgvPrompts).BeginInit();
             tabPagePerPrompt.SuspendLayout();
+            tabPageFullVideo.SuspendLayout();
             SuspendLayout();
             // 
             // tabControl
@@ -216,19 +218,9 @@ namespace iviewer
             lblResolution.TabIndex = 0;
             lblResolution.Text = "N/A";
             // 
-            // tabPageFullVideo
-            // 
-            tabPageFullVideo.Location = new Point(4, 24);
-            tabPageFullVideo.Name = "tabPageFullVideo";
-            tabPageFullVideo.Padding = new Padding(3);
-            tabPageFullVideo.Size = new Size(992, 672);
-            tabPageFullVideo.TabIndex = 2;
-            tabPageFullVideo.Text = "Full Video";
-            tabPageFullVideo.UseVisualStyleBackColor = true;
-            // 
             // tabPagePerPrompt
             // 
-            tabPagePerPrompt.Controls.Add(btnExport);
+            tabPagePerPrompt.Controls.Add(btnPreview);
             tabPagePerPrompt.Controls.Add(btnImport);
             tabPagePerPrompt.Controls.Add(btnPlayAll);
             tabPagePerPrompt.Location = new Point(4, 24);
@@ -239,16 +231,16 @@ namespace iviewer
             tabPagePerPrompt.Text = "Per-Prompt Videos";
             tabPagePerPrompt.UseVisualStyleBackColor = true;
             // 
-            // btnExport
+            // btnPreview
             // 
-            btnExport.Anchor = AnchorStyles.Top | AnchorStyles.Right;
-            btnExport.Location = new Point(886, 6);
-            btnExport.Name = "btnExport";
-            btnExport.Size = new Size(100, 23);
-            btnExport.TabIndex = 8;
-            btnExport.Text = "Export Stitched";
-            btnExport.UseVisualStyleBackColor = true;
-            btnExport.Click += btnExport_Click;
+            btnPreview.Anchor = AnchorStyles.Top | AnchorStyles.Right;
+            btnPreview.Location = new Point(886, 6);
+            btnPreview.Name = "btnPreview";
+            btnPreview.Size = new Size(100, 23);
+            btnPreview.TabIndex = 8;
+            btnPreview.Text = "Preview";
+            btnPreview.UseVisualStyleBackColor = true;
+            btnPreview.Click += btnPreview_Click;
             // 
             // btnImport
             // 
@@ -272,6 +264,27 @@ namespace iviewer
             btnPlayAll.UseVisualStyleBackColor = true;
             btnPlayAll.Click += btnPlayAll_Click;
             // 
+            // tabPageFullVideo
+            // 
+            tabPageFullVideo.Controls.Add(btnExport);
+            tabPageFullVideo.Location = new Point(4, 24);
+            tabPageFullVideo.Name = "tabPageFullVideo";
+            tabPageFullVideo.Padding = new Padding(3);
+            tabPageFullVideo.Size = new Size(992, 672);
+            tabPageFullVideo.TabIndex = 2;
+            tabPageFullVideo.Text = "Full Video";
+            tabPageFullVideo.UseVisualStyleBackColor = true;
+            // 
+            // btnExport
+            // 
+            btnExport.Location = new Point(909, 6);
+            btnExport.Name = "btnExport";
+            btnExport.Size = new Size(75, 23);
+            btnExport.TabIndex = 0;
+            btnExport.Text = "Export";
+            btnExport.UseVisualStyleBackColor = true;
+            btnExport.Click += btnExport_Click;
+            // 
             // VideoGenerator
             // 
             AutoScaleDimensions = new SizeF(96F, 96F);
@@ -285,6 +298,7 @@ namespace iviewer
             tabPageGeneration.PerformLayout();
             ((System.ComponentModel.ISupportInitialize)dgvPrompts).EndInit();
             tabPagePerPrompt.ResumeLayout(false);
+            tabPageFullVideo.ResumeLayout(false);
             ResumeLayout(false);
         }
 
@@ -310,7 +324,7 @@ namespace iviewer
         private Label lblProgress;
 
         // Preview tab controls
-        private Button btnExport;
+        private Button btnPreview;
         private Button btnImport;
         private Button btnPlayAll;
 
@@ -349,6 +363,11 @@ namespace iviewer
             ImportVideosForTesting();
         }
 
+        private void btnPreview_Click(object sender, EventArgs e)
+        {
+            OnPreviewClick();
+        }
+
         private void InitializeVideoPlayers()
         {
             // Create video players programmatically since designer can't handle custom controls well
@@ -383,5 +402,6 @@ namespace iviewer
         {
             StartPlayAllSequence();
         }
+        private Button btnExport;
     }
 }

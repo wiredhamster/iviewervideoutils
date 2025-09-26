@@ -233,6 +233,7 @@ namespace iviewer.Services
             _config = config;
         }
 
+        // Not used?
         public async Task<string> ExportVideosAsync(VideoExportData exportData, Action<int> onProgress)
         {
             Directory.CreateDirectory(_config.ExportDir);
@@ -484,9 +485,9 @@ namespace iviewer.Services
     {
         private readonly string _tempDir;
 
-        public FileManagementService(string tempDir)
+        public FileManagementService(VideoGenerationConfig _config)
         {
-            _tempDir = tempDir;
+            _tempDir = _config.TempDir;
             Directory.CreateDirectory(_tempDir);
         }
 
@@ -749,7 +750,7 @@ namespace iviewer.Helpers
                     var txtDuration = new TextBox
                     {
                         Size = new Size(40, 20),
-                        Text = "0"
+                        Text = transitionDurations[i].ToString()
                     };
 
                     txtDuration.TextChanged += (s, e) => {

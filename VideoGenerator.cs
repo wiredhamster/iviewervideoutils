@@ -12,6 +12,7 @@ namespace iviewer
 {
     public partial class VideoGenerator : Form
     {
+        private readonly VideoGenerationConfig _config;
         private readonly VideoGenerationService _generationService;
         private readonly VideoExportService _exportService;
         private readonly VideoMetadataService _metadataService;
@@ -22,6 +23,7 @@ namespace iviewer
         private List<string> _perPromptVideoPaths = new List<string>();
         private List<string> _rowWorkflows = new List<string>();
         private List<VideoClipInfo> _clipInfos = new List<VideoClipInfo>();
+        private string _previewVideoPath = null;
         private List<string> _tempFiles = new List<string>();
 
         // Stream references for video players
@@ -54,12 +56,12 @@ namespace iviewer
         public VideoGenerator()
         {
             InitializeComponent();
-       
-            var config = new VideoGenerationConfig();
-            _generationService = new VideoGenerationService(config);
-            _exportService = new VideoExportService(config);
+
+            _config = new VideoGenerationConfig();
+            _generationService = new VideoGenerationService(_config);
+            _exportService = new VideoExportService(_config);
             _metadataService = new VideoMetadataService();
-            _fileService = new FileManagementService(config.TempDir);
+            _fileService = new FileManagementService(_config);
             _uiService = new UIUpdateService();
 
             InitializeGrid();
@@ -350,10 +352,9 @@ namespace iviewer
             var validVideos = _perPromptVideoPaths.Where(p => !string.IsNullOrEmpty(p) && File.Exists(p)).ToList();
 
             // Load Full Video tab
-            string fullVideoPath = validVideos.LastOrDefault();
-            if (!string.IsNullOrEmpty(fullVideoPath))
+            if (!string.IsNullOrEmpty(_previewVideoPath) && File.Exists(_previewVideoPath))
             {
-                LoadVideoInPlayer(videoPlayerFull, fullVideoPath, ref _fullStream);
+                LoadVideoInPlayer(videoPlayerFull, _previewVideoPath, ref _fullStream);
             }
 
             // Load Per-Prompt Videos tab
@@ -374,29 +375,29 @@ namespace iviewer
                 OnTransitionDurationChanged,
                 _videoButtons);
 
-			// Configure flow panel to not overlap buttons
-			flowPanel.Anchor = AnchorStyles.Left | AnchorStyles.Right | AnchorStyles.Bottom;
-			flowPanel.Location = new Point(3, tabPagePerPrompt.Height - 200);
-			flowPanel.Size = new Size(986, 165);
-			flowPanel.AutoScroll = true;
+            // Configure flow panel to not overlap buttons
+            flowPanel.Anchor = AnchorStyles.Left | AnchorStyles.Right | AnchorStyles.Bottom;
+            flowPanel.Location = new Point(3, tabPagePerPrompt.Height - 200);
+            flowPanel.Size = new Size(986, 165);
+            flowPanel.AutoScroll = true;
 
-			// Clear existing dynamic controls but keep the buttons and video player
-			var controlsToRemove = tabPagePerPrompt.Controls.OfType<Control>()
-				.Where(c => c != videoPlayerPerPrompt && c != btnExport && c != btnImport && c != btnPlayAll)
-				.ToList();
+            // Clear existing dynamic controls but keep the buttons and video player
+            var controlsToRemove = tabPagePerPrompt.Controls.OfType<Control>()
+                .Where(c => c != videoPlayerPerPrompt && c != btnPreview && c != btnImport && c != btnPlayAll)
+                .ToList();
 
-			foreach (var control in controlsToRemove)
-			{
-				tabPagePerPrompt.Controls.Remove(control);
-				control.Dispose();
-			}
+            foreach (var control in controlsToRemove)
+            {
+                tabPagePerPrompt.Controls.Remove(control);
+                control.Dispose();
+            }
 
-			// Add the flow panel
-			tabPagePerPrompt.Controls.Add(flowPanel);
-			videoPlayerPerPrompt.BringToFront();
+            // Add the flow panel
+            tabPagePerPrompt.Controls.Add(flowPanel);
+            videoPlayerPerPrompt.BringToFront();
 
             // Ensure buttons are visible and positioned correctly
-            btnExport.BringToFront();
+            btnPreview.BringToFront();
             btnImport.BringToFront();
             btnPlayAll.BringToFront();
 
@@ -448,6 +449,9 @@ namespace iviewer
                 // Create new stream and assign
                 streamRef = new FileStream(normalizedPath, FileMode.Open, FileAccess.Read);
                 player.VideoStream = streamRef;
+
+                btnExport.BringToFront();
+                UpdateButtonStates();
             }
             catch (Exception ex)
             {
@@ -494,27 +498,105 @@ namespace iviewer
 
         #endregion
 
+        #region Preview Methods
+
+        private async void OnPreviewClick()
+        {
+            if (!ValidateExport()) return;
+
+            SetPreviewButtonState(true, "Creating...");
+
+            try
+            {
+                var validVideos = _perPromptVideoPaths.Where(p => !string.IsNullOrEmpty(p) && File.Exists(p)).ToList();
+
+                string previewFilename = $"preview_{DateTime.Now:yyyyMMdd_HHmmss}.mp4";
+                string previewPath = Path.Combine(_fileService.TempDir, previewFilename);
+
+                // Create preview with transitions but without upscaling/interpolation
+                bool success = await VideoUtils.StitchVideosWithTransitionsAsync(
+                    validVideos,
+                    previewPath,
+                    TRANSITION_TYPE,
+                    _transitionDurations);
+
+                if (success)
+                {
+                    _previewVideoPath = previewPath;
+                    _tempFiles.Add(previewPath); // Track for cleanup
+
+                    // Switch to Full Video tab and load the preview
+                    tabControl.SelectedIndex = 2; // Full Video tab
+                    LoadVideoInPlayer(videoPlayerFull, previewPath, ref _fullStream);
+                }
+                else
+                {
+                    MessageBox.Show("Failed to create preview video.");
+                }
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show($"Preview creation failed: {ex.Message}");
+            }
+            finally
+            {
+                SetPreviewButtonState(false, "Preview");
+            }
+        }
+
+        // Helper method for preview button state:
+        private void SetPreviewButtonState(bool isProcessing, string text)
+        {
+            btnPreview.Enabled = !isProcessing;
+            btnPreview.Text = text;
+        }
+
+        #endregion
+
         #region Export Methods
 
         private async void OnExportClick()
         {
-            if (!ValidateExport()) return;
+            if (string.IsNullOrEmpty(_previewVideoPath) || !File.Exists(_previewVideoPath))
+            {
+                MessageBox.Show("No preview video available. Please create a preview first from the Per-Prompt Videos tab.");
+                return;
+            }
 
             SetExportButtonState(true, "Exporting...");
 
             try
             {
-                var exportData = new VideoExportData
-                {
-                    VideoPaths = _perPromptVideoPaths.Where(p => !string.IsNullOrEmpty(p) && File.Exists(p)).ToList(),
-                    ClipInfos = GenerateClipInfos(),
-                    TransitionType = TRANSITION_TYPE,
-                    TransitionDurations = _transitionDurations.Take(_perPromptVideoPaths.Count(p => !string.IsNullOrEmpty(p))).ToList(),
-                    ExportTimestamp = DateTime.Now
-                };
+                string filename = DateTime.Now.ToString("yyyyMMdd-HHmmss");
+                string tempPath = Path.Combine(_fileService.TempDir, filename + ".mp4");
+                string exportPath = Path.Combine(
+                    _config.ExportDir,
+                    filename + ".mp4");
+                string metaPath = Path.Combine(
+                    Path.GetDirectoryName(exportPath) ?? "",
+                    filename + ".json");
 
-                string exportPath = await _exportService.ExportVideosAsync(exportData, OnExportProgressUpdate);
-                MessageBox.Show($"Exported successfully to: {exportPath}");
+                // Ensure export directory exists
+                Directory.CreateDirectory(Path.GetDirectoryName(exportPath) ?? "");
+
+                // Apply upscaling and interpolation to the preview video
+                bool success = await VideoUtils.UpscaleAndInterpolateVideoAsync(_previewVideoPath, tempPath);
+
+                if (!success)
+                {
+                    throw new Exception("Video upscaling and interpolation failed");
+                }
+
+                // Export metadata
+                await ExportMetadataAsync(GenerateClipInfos(), metaPath);
+
+                // Copy to final location
+                File.Copy(tempPath, exportPath, overwrite: true);
+
+                // Cleanup temp file
+                File.Delete(tempPath);
+
+                MessageBox.Show($"Video exported successfully to: {exportPath}");
             }
             catch (Exception ex)
             {
@@ -522,8 +604,23 @@ namespace iviewer
             }
             finally
             {
-                SetExportButtonState(false, "Export Stitched");
+                SetExportButtonState(false, "Export");
             }
+        }
+
+        private async Task ExportMetadataAsync(List<VideoClipInfo> clipInfos, string metaPath)
+        {
+            var jsonData = new
+            {
+                Source = Guid.NewGuid(),
+                ClipInfos = clipInfos,
+                TransitionType = TRANSITION_TYPE,
+                TransitionDurations = _transitionDurations,
+                ExportTimestamp = DateTime.Now
+            };
+
+            string json = Newtonsoft.Json.JsonConvert.SerializeObject(jsonData, Newtonsoft.Json.Formatting.Indented);
+            await File.WriteAllTextAsync(metaPath, json);
         }
 
         private void ImportVideosForTesting()
@@ -634,7 +731,9 @@ namespace iviewer
         {
             btnGenerateAll.Enabled = dgvPrompts.Rows.Count > 0;
             btnExtractLast.Enabled = HasGeneratedVideos() && dgvPrompts.SelectedRows.Count > 0;
-            btnExport.Enabled = HasGeneratedVideos();
+            btnPreview.Enabled = HasGeneratedVideos();
+            btnImport.Enabled = true;
+            btnExport.Enabled = !string.IsNullOrEmpty(_previewVideoPath) && File.Exists(_previewVideoPath);
         }
 
         private bool HasGeneratedVideos()
