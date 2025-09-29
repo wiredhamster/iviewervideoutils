@@ -77,31 +77,31 @@ namespace iviewer
 
 		public async void StopAndHide()
 		{
-			if (mediaPlayer.IsPlaying)
+			try
 			{
-                var stopTask = Task.Run(() =>
-                {
-                    try
-                    {
-                        mediaPlayer.Stop();
-                    }
-                    catch (Exception ex)
-                    {
-                        // Log ex if needed
-                    }
-                });
+				if (mediaPlayer.IsPlaying)
+				{
+					var stopTask = Task.Run(() =>
+					{
+						mediaPlayer.Stop();
+					});
 
-                // Wait with timeout (e.g., 5 seconds)
-                if (!stopTask.Wait(TimeSpan.FromSeconds(5)))
-                {
-                    // Timeout: Force dispose or handle hang (can't kill VLC thread, but continue app)
-                    // Log "Stop timed out"
-                }
-            }
+					// Wait with timeout (e.g., 5 seconds)
+					if (!stopTask.Wait(TimeSpan.FromSeconds(5)))
+					{
+						// Timeout: Force dispose or handle hang (can't kill VLC thread, but continue app)
+						// Log "Stop timed out"
+					}
+				}
 
-			currentMedia?.Dispose();
-			currentMedia = null;
-		}
+				currentMedia?.Dispose();
+				currentMedia = null;
+			}
+			catch (Exception ex)
+			{
+				// Log ex if needed
+			}
+        }
 
 		protected override void Dispose(bool disposing)
 		{
