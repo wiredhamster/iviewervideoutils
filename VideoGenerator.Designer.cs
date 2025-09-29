@@ -42,9 +42,9 @@ namespace iviewer
             colImage = new DataGridViewImageColumn();
             colPrompt = new DataGridViewTextBoxColumn();
             colLora = new DataGridViewButtonColumn();
-            colGenerate = new DataGridViewButtonColumn();
+            colQueue = new DataGridViewButtonColumn();
             btnExtractLast = new Button();
-            btnGenerateAll = new Button();
+            btnQueueAll = new Button();
             btnDeleteRow = new Button();
             btnAddRow = new Button();
             lblResolution = new Label();
@@ -79,7 +79,7 @@ namespace iviewer
             tabPageGeneration.Controls.Add(pbProgress);
             tabPageGeneration.Controls.Add(dgvPrompts);
             tabPageGeneration.Controls.Add(btnExtractLast);
-            tabPageGeneration.Controls.Add(btnGenerateAll);
+            tabPageGeneration.Controls.Add(btnQueueAll);
             tabPageGeneration.Controls.Add(btnDeleteRow);
             tabPageGeneration.Controls.Add(btnAddRow);
             tabPageGeneration.Controls.Add(lblResolution);
@@ -118,7 +118,7 @@ namespace iviewer
             dgvPrompts.Anchor = AnchorStyles.Top | AnchorStyles.Bottom | AnchorStyles.Left | AnchorStyles.Right;
             dgvPrompts.AutoSizeColumnsMode = DataGridViewAutoSizeColumnsMode.Fill;
             dgvPrompts.ColumnHeadersHeightSizeMode = DataGridViewColumnHeadersHeightSizeMode.AutoSize;
-            dgvPrompts.Columns.AddRange(new DataGridViewColumn[] { colImage, colPrompt, colLora, colGenerate });
+            dgvPrompts.Columns.AddRange(new DataGridViewColumn[] { colImage, colPrompt, colLora, colQueue });
             dataGridViewCellStyle2.Alignment = DataGridViewContentAlignment.TopLeft;
             dataGridViewCellStyle2.BackColor = SystemColors.Window;
             dataGridViewCellStyle2.Font = new System.Drawing.Font("Segoe UI", 9F);
@@ -159,12 +159,12 @@ namespace iviewer
             colLora.Text = "Select LoRA";
             colLora.UseColumnTextForButtonValue = true;
             // 
-            // colGenerate
+            // colQueue
             // 
-            colGenerate.FillWeight = 15F;
-            colGenerate.HeaderText = "Action";
-            colGenerate.Name = "colGenerate";
-            colGenerate.Text = "Generate";
+            colQueue.FillWeight = 15F;
+            colQueue.HeaderText = "Action";
+            colQueue.Name = "colQueue";
+            colQueue.Text = "Queue";
             // 
             // btnExtractLast
             // 
@@ -178,16 +178,16 @@ namespace iviewer
             btnExtractLast.UseVisualStyleBackColor = true;
             btnExtractLast.Click += btnExtractLast_Click;
             // 
-            // btnGenerateAll
+            // btnQueueAll
             // 
-            btnGenerateAll.Anchor = AnchorStyles.Top | AnchorStyles.Right;
-            btnGenerateAll.Location = new Point(790, 6);
-            btnGenerateAll.Name = "btnGenerateAll";
-            btnGenerateAll.Size = new Size(100, 23);
-            btnGenerateAll.TabIndex = 3;
-            btnGenerateAll.Text = "Generate All";
-            btnGenerateAll.UseVisualStyleBackColor = true;
-            btnGenerateAll.Click += btnGenerateAll_Click;
+            btnQueueAll.Anchor = AnchorStyles.Top | AnchorStyles.Right;
+            btnQueueAll.Location = new Point(790, 6);
+            btnQueueAll.Name = "btnQueueAll";
+            btnQueueAll.Size = new Size(100, 23);
+            btnQueueAll.TabIndex = 3;
+            btnQueueAll.Text = "Queue All";
+            btnQueueAll.UseVisualStyleBackColor = true;
+            btnQueueAll.Click += btnQueueAll_Click;
             // 
             // btnDeleteRow
             // 
@@ -313,13 +313,13 @@ namespace iviewer
         private Label lblResolution;
         private Button btnAddRow;
         private Button btnDeleteRow;
-        private Button btnGenerateAll;
+        private Button btnQueueAll;
         private Button btnExtractLast;
         private DataGridView dgvPrompts;
         private DataGridViewImageColumn colImage;
         private DataGridViewTextBoxColumn colPrompt;
         private DataGridViewButtonColumn colLora;
-        private DataGridViewButtonColumn colGenerate;
+        private DataGridViewButtonColumn colQueue;
         private ProgressBar pbProgress;
         private Label lblProgress;
 
@@ -343,9 +343,9 @@ namespace iviewer
             DeleteSelectedRow();
         }
 
-        private void btnGenerateAll_Click(object sender, EventArgs e)
+        private void btnQueueAll_Click(object sender, EventArgs e)
         {
-            OnGenerateAllClick();
+            OnQueueAllClick();
         }
 
         private void btnExtractLast_Click(object sender, EventArgs e)

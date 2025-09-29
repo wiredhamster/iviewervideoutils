@@ -20,6 +20,9 @@ namespace iviewer
         private readonly FileManagementService _fileService;
         private readonly UIUpdateService _uiService;
 
+        private Guid _pk;
+        private VideoGenerationState _videoGenerationState;
+
         private List<string> _rowImagePaths = new List<string>();
         private List<string> _perPromptVideoPaths = new List<string>();
         private List<string> _rowWorkflows = new List<string>();
@@ -126,7 +129,7 @@ namespace iviewer
             var row = dgvPrompts.Rows[rowIndex];
             row.Cells["colPrompt"].Value = data.Prompt;
             row.Cells["colLora"].Value = "Select LoRA";
-            row.Cells["colGenerate"].Value = "Generate";
+            row.Cells["colQueue"].Value = "Queue";
 
             if (!string.IsNullOrEmpty(data.ImagePath))
             {
@@ -137,7 +140,7 @@ namespace iviewer
             dgvPrompts.AutoResizeRows(DataGridViewAutoSizeRowsMode.AllCells);
         }
 
-        private async void OnGenerateSingleClick(int rowIndex)
+        private async void OnQueueSingleClick(int rowIndex)
         {
             var rowData = GetRowData(rowIndex);
             if (!ValidateRowData(rowData))
@@ -146,41 +149,18 @@ namespace iviewer
                 return;
             }
 
-            UpdateRowStatus(rowIndex, "Generating...");
+            UpdateRowStatus(rowIndex, "Queuing");
+            UpdateState();
 
-            try
-            {
-                if (_width == 0 || _height == 0)
-                {
-                    // Calculate resolution based on first row
-                    (_width, _height) = ResolutionCalculator.Calculate(GetRowData(0).ImagePath);
-                }
+            _generationService.QueueClips(_videoGenerationState);
 
-                string videoPath = await _generationService.GenerateVideoAsync(rowData, rowIndex, _width, _height);
 
-                if (!string.IsNullOrEmpty(videoPath))
-                {
-                    _perPromptVideoPaths[rowIndex] = videoPath;
-                    _rowWorkflows[rowIndex] = rowData.WorkflowJson;
-                    _tempFiles.Add(videoPath);
-                    UpdateRowStatus(rowIndex, "Generated");
-                    RefreshPreviewIfOpen();
-                }
-                else
-                {
-                    UpdateRowStatus(rowIndex, "Generate");
-                }
-            }
-            catch (Exception ex)
-            {
-                MessageBox.Show($"Generation failed: {ex.Message}");
-                UpdateRowStatus(rowIndex, "Generate");
-            }
 
+            LoadState(_pk);
             UpdateUI();
         }
 
-        private async void OnGenerateAllClick()
+        private async void OnQueueAllClick()
         {
             if (!ValidateGenerateAll()) return;
 
@@ -665,7 +645,7 @@ namespace iviewer
                     // Add grid row
                     int rowIndex = dgvPrompts.Rows.Add();
                     dgvPrompts.Rows[rowIndex].Cells["colPrompt"].Value = "Imported Video";
-                    dgvPrompts.Rows[rowIndex].Cells["colGenerate"].Value = "Imported";
+                    dgvPrompts.Rows[rowIndex].Cells["colQueue"].Value = "Imported";
 
                     // Add clip info for metadata
                     _clipInfos.Add(new VideoClipInfo
@@ -747,7 +727,7 @@ namespace iviewer
 
         private void UpdateButtonStates()
         {
-            btnGenerateAll.Enabled = dgvPrompts.Rows.Count > 0;
+            btnQueueAll.Enabled = dgvPrompts.Rows.Count > 0;
             btnExtractLast.Enabled = HasGeneratedVideos() && dgvPrompts.SelectedRows.Count > 0;
             btnPreview.Enabled = HasGeneratedVideos();
             btnImport.Enabled = true;
@@ -759,15 +739,16 @@ namespace iviewer
             return _perPromptVideoPaths.Any(p => !string.IsNullOrEmpty(p) && File.Exists(p));
         }
 
+        // TODO: Update for Queued statuses
         private void UpdateRowStatus(int rowIndex, string status)
         {
             if (rowIndex >= 0 && rowIndex < dgvPrompts.Rows.Count)
             {
                 var row = dgvPrompts.Rows[rowIndex];
-                row.Cells["colGenerate"].Value = status;
+                row.Cells["colQueue"].Value = status;
 
                 // Apply color coding for generating status
-                var generateCell = row.Cells["colGenerate"];
+                var generateCell = row.Cells["colQueue"];
                 if (status == "Generating...")
                 {
                     generateCell.Style.BackColor = Color.LightBlue;
@@ -850,8 +831,8 @@ namespace iviewer
                 case "colLora":
                     HandleLoraSelection(e.RowIndex);
                     break;
-                case "colGenerate":
-                    OnGenerateSingleClick(e.RowIndex);
+                case "colQueue":
+                    OnQueueSingleClick(e.RowIndex);
                     break;
             }
         }
@@ -862,7 +843,7 @@ namespace iviewer
             if (ofd.ShowDialog() == DialogResult.OK)
             {
                 // Check if this row was previously generated
-                bool wasGenerated = dgvPrompts.Rows[rowIndex].Cells["colGenerate"].Value?.ToString() == "Generated";
+                bool wasGenerated = dgvPrompts.Rows[rowIndex].Cells["colQueue"].Value?.ToString() == "Generated";
 
                 _rowImagePaths[rowIndex] = ofd.FileName;
                 dgvPrompts.Rows[rowIndex].Cells["colImage"].Value =
@@ -874,8 +855,8 @@ namespace iviewer
                     _updatingRowStatus = true;
                     try
                     {
-                        dgvPrompts.Rows[rowIndex].Cells["colGenerate"].Value = "Regenerate";
-                        var generateCell = dgvPrompts.Rows[rowIndex].Cells["colGenerate"];
+                        dgvPrompts.Rows[rowIndex].Cells["colQueue"].Value = "Requeue";
+                        var generateCell = dgvPrompts.Rows[rowIndex].Cells["colQueue"];
                         generateCell.Style.BackColor = Color.LightYellow;
                         generateCell.Style.ForeColor = Color.DarkOrange;
                     }
@@ -901,14 +882,14 @@ namespace iviewer
             if (e.RowIndex >= 0 && !_updatingRowStatus)
             {
                 // Mark row as potentially modified if it was previously generated
-                var currentStatus = dgvPrompts.Rows[e.RowIndex].Cells["colGenerate"].Value?.ToString();
+                var currentStatus = dgvPrompts.Rows[e.RowIndex].Cells["colQueue"].Value?.ToString();
                 if (currentStatus == "Generated")
                 {
                     _updatingRowStatus = true;
                     try
                     {
-                        dgvPrompts.Rows[e.RowIndex].Cells["colGenerate"].Value = "Regenerate";
-                        var generateCell = dgvPrompts.Rows[e.RowIndex].Cells["colGenerate"];
+                        dgvPrompts.Rows[e.RowIndex].Cells["colQueue"].Value = "Requeue";
+                        var generateCell = dgvPrompts.Rows[e.RowIndex].Cells["colQueue"];
                         generateCell.Style.BackColor = Color.LightYellow;
                         generateCell.Style.ForeColor = Color.DarkOrange;
                     }
@@ -968,18 +949,9 @@ namespace iviewer
         {
             foreach (DataGridViewRow row in dgvPrompts.Rows)
             {
-                row.Cells["colGenerate"].Value = "Generate";
+                row.Cells["colQueue"].Value = "Queue";
             }
             dgvPrompts.Refresh();
-        }
-
-        private void ResetRowStatusIfGenerated(int rowIndex)
-        {
-            var row = dgvPrompts.Rows[rowIndex];
-            if (row.Cells["colGenerate"].Value?.ToString() == "Generated")
-            {
-                row.Cells["colGenerate"].Value = "Generate";
-            }
         }
 
         private List<VideoRowData> GetAllRowData()
@@ -987,14 +959,6 @@ namespace iviewer
             return Enumerable.Range(0, dgvPrompts.Rows.Count)
                            .Select(GetRowData)
                            .ToList();
-        }
-
-        private void SelectAndGenerateRow(int rowIndex)
-        {
-            dgvPrompts.ClearSelection();
-            dgvPrompts.Rows[rowIndex].Selected = true;
-            dgvPrompts.CurrentCell = dgvPrompts.Rows[rowIndex].Cells["colGenerate"];
-            OnGenerateSingleClick(rowIndex);
         }
 
         private void RefreshPreviewIfOpen()
@@ -1012,6 +976,7 @@ namespace iviewer
             btnExport.Text = text;
         }
 
+        // TODO: I feel like this should come from the ClipGenerationStatus now.
         private void UpdateRowGenerationStatus(int rowIndex)
         {
             if (rowIndex < 0 || rowIndex >= dgvPrompts.Rows.Count || _updatingRowStatus)
@@ -1021,7 +986,7 @@ namespace iviewer
             try
             {
                 var row = dgvPrompts.Rows[rowIndex];
-                string currentStatus = row.Cells["colGenerate"].Value?.ToString() ?? "Generate";
+                string currentStatus = row.Cells["colQueue"].Value?.ToString() ?? "Queue";
 
                 // Check if video exists for this row
                 bool hasVideo = rowIndex < _perPromptVideoPaths.Count &&
@@ -1037,15 +1002,20 @@ namespace iviewer
                 string newStatus;
                 if (!hasValidData)
                 {
-                    newStatus = "Generate";
+                    newStatus = "Queue";
                 }
                 else if (!hasVideo)
                 {
-                    newStatus = "Generate";
+                    newStatus = "Queue";
                 }
                 else if (currentStatus == "Generating...")
                 {
                     // Don't change if currently generating
+                    return;
+                }
+                else if (currentStatus == "Queued")
+                {
+                    // Don't change if currently queued
                     return;
                 }
                 else
@@ -1053,7 +1023,7 @@ namespace iviewer
                     // Has video and valid data - check if it's been modified
                     if (HasRowBeenModifiedSinceGeneration(rowIndex))
                     {
-                        newStatus = "Regenerate";
+                        newStatus = "Requeue";
                     }
                     else
                     {
@@ -1065,10 +1035,10 @@ namespace iviewer
                 if (currentStatus != newStatus)
                 {
                     // Update button text and color
-                    row.Cells["colGenerate"].Value = newStatus;
+                    row.Cells["colQueue"].Value = newStatus;
 
                     // Optional: Change button appearance based on status
-                    var generateCell = row.Cells["colGenerate"];
+                    var generateCell = row.Cells["colQueue"];
                     switch (newStatus)
                     {
                         case "Generated":
@@ -1270,41 +1240,47 @@ namespace iviewer
 
         #region Load / Save state
 
-        public void SaveState()
+        void UpdateState()
         {
-            var state = new VideoGenerationState
+            if (_videoGenerationState == null)
             {
-                ImagePath = _rowImagePaths.FirstOrDefault() ?? string.Empty, // First clip's image for display
-                Width = _width,
-                Height = _height,
-                PreviewPath = _previewVideoPath,
-                TempFiles = string.Join(",", _tempFiles),
-                Status = "Queued" // Or calc based on clips
-            };
-            state.Save(); // Saves to DB, sets PK
+                _videoGenerationState = VideoGenerationState.New();
+                _videoGenerationState.Status = "Queued";
+                _pk = _videoGenerationState.PK;
+            }
+
+            _videoGenerationState.ImagePath = _rowImagePaths.FirstOrDefault() ?? string.Empty; // First clip's image for display
+            _videoGenerationState.Width = _width;
+            _videoGenerationState.Height = _height;
+            _videoGenerationState.PreviewPath = _previewVideoPath;
+            _videoGenerationState.TempFiles = string.Join(",", _tempFiles);
 
             for (int i = 0; i < dgvPrompts.Rows.Count; i++)
             {
-                var clipState = new ClipGenerationState
+                // TODO: I feel this is a bad idea. What if a row is deleted? Relying on rowIndex is not good. Should make this more robust.
+                var clipState = _videoGenerationState.ClipGenerationStates.Count > i ? _videoGenerationState.ClipGenerationStates[i] : null;
+                if (clipState == null)
                 {
-                    VideoGenerationStatePK = state.PK,
-                    ImagePath = _rowImagePaths.ElementAtOrDefault(i) ?? string.Empty,
-                    VideoPath = _perPromptVideoPaths.ElementAtOrDefault(i) ?? string.Empty,
-                    Prompt = dgvPrompts.Rows[i].Cells["colPrompt"].Value?.ToString() ?? string.Empty,
-                    WorkflowPath = _rowWorkflows.ElementAtOrDefault(i) ?? string.Empty,
-                    Status = "Queued",
-                    OrderIndex = i
-                };
-                clipState.Save();
-            }
+                    clipState = ClipGenerationState.New();
+                }
 
-            MessageBox.Show($"State saved with PK: {state.PK}");
+                clipState.VideoGenerationStatePK = _pk;
+                clipState.ImagePath = _rowImagePaths.ElementAtOrDefault(i) ?? string.Empty;
+                clipState.VideoPath = _perPromptVideoPaths.ElementAtOrDefault(i) ?? string.Empty;
+                clipState.Prompt = dgvPrompts.Rows[i].Cells["colPrompt"].Value?.ToString() ?? string.Empty;
+                clipState.WorkflowPath = _rowWorkflows.ElementAtOrDefault(i) ?? string.Empty;
+                clipState.Status = dgvPrompts.Rows[i].Cells["colQueue"].Value?.ToString() ?? string.Empty;
+                clipState.OrderIndex = i; // TODO: Remove
+
+                _videoGenerationState.ClipGenerationStates.Add(clipState);
+            }
         }
 
         public void LoadState(Guid pk)
         {
             var state = VideoGenerationState.Load(pk);
 
+            _pk = pk;
             _width = state.Width;
             _height = state.Height;
             _previewVideoPath = state.PreviewPath;
@@ -1321,7 +1297,7 @@ namespace iviewer
                 int rowIndex = dgvPrompts.Rows.Add();
                 dgvPrompts.Rows[rowIndex].Cells["colPrompt"].Value = clipState.Prompt;
                 dgvPrompts.Rows[rowIndex].Cells["colLora"].Value = "Select LoRA";
-                dgvPrompts.Rows[rowIndex].Cells["colGenerate"].Value = "Generate";
+                dgvPrompts.Rows[rowIndex].Cells["colQueue"].Value = clipState.Status;
 
                 string imgPath = clipState.ImagePath;
                 _rowImagePaths.Add(File.Exists(imgPath) ? imgPath : string.Empty);
@@ -1341,10 +1317,8 @@ namespace iviewer
                 string vidPath = clipState.VideoPath;
                 _perPromptVideoPaths.Add(File.Exists(vidPath) ? vidPath : string.Empty);
 
-                _rowWorkflows.Add(clipState.WorkflowPath);
+                _rowWorkflows.Add(clipState.WorkflowJson);
             }
-
-            MessageBox.Show("State loaded.");
         }
 
         #endregion

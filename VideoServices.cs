@@ -12,10 +12,11 @@ using System.Net.Http;
 using System.Text;
 using System.Threading.Tasks;
 using System.Windows.Forms;
+//using static System.Windows.Forms.VisualStyles.VisualStyleElement;
 
 namespace iviewer.Services
 {
-    public class VideoGenerationService
+    internal class VideoGenerationService
     {
         private readonly VideoGenerationConfig _config;
         private readonly HttpClient _httpClient;
@@ -30,6 +31,33 @@ namespace iviewer.Services
             Directory.CreateDirectory(_config.TempDir);
         }
 
+        public void QueueClips(VideoGenerationState state)
+        {
+            state.Save();
+
+            foreach (var clip in state.ClipGenerationStates)
+            {
+                if (clip.Status == "Queuing")
+                {
+                    // Load or create
+                    var item = VideoQueueItem.New();
+                    item.LoadFromSql($"SELECT * FROM VideoGenerationQueue WHERE ClipGenerationStatePK = {DB.FormatDBValue(clip.PK)}");
+
+                    // This seems defective. If the item isn't in the DB then it gets created anyway. But without the proper FK.
+                    if (item.ClipGenerationStatePK == Guid.Empty)
+                    {
+                        item.ClipGenerationStatePK = clip.PK;
+                    }
+
+                    item.Status = "Queued";
+                    clip.Status = "Queued";
+
+                    clip.Save();
+                    item.Save();
+                }
+            }
+        }
+
         public async Task<string> GenerateVideoAsync(VideoRowData rowData, int rowIndex, int width, int height)
         {
             string selectedWorkflow = string.IsNullOrEmpty(rowData.EndImagePath)
@@ -37,11 +65,53 @@ namespace iviewer.Services
                 : _config.WorkflowPathLast;
 
             string workflowJson = await PrepareWorkflowAsync(selectedWorkflow, rowData, width, height);
-            string videoPath = await ExecuteWorkflowAsync(workflowJson, rowData, rowIndex);
+            string videoPath = await ExecuteWorkflowAsync(workflowJson); //, rowData, rowIndex);
 
             if (!string.IsNullOrEmpty(videoPath))
             {
                 rowData.WorkflowJson = workflowJson; // Store for metadata extraction
+            }
+
+            return videoPath;
+        }
+
+        public async Task<string> GenerateVideoAsync(ClipGenerationState clip)
+        {
+            var video = VideoGenerationState.Load(clip.VideoGenerationStatePK);
+            var endImagePath = "";
+
+            var thisClip = false;
+            foreach (var item in video.ClipGenerationStates)
+            {
+                if (thisClip)
+                {
+                    endImagePath = item.ImagePath;
+                    break;
+                }
+
+                if (item.PK == clip.PK)
+                {
+                    thisClip = true;
+                }
+            }
+
+            string selectedWorkflow = string.IsNullOrEmpty(endImagePath)
+                ? _config.WorkflowPath
+                : _config.WorkflowPathLast;
+
+            string workflowJson = await PrepareWorkflowAsync(selectedWorkflow, clip.Prompt, clip.ImagePath, endImagePath, video.Width, video.Height);
+
+            clip.Status = "Generating";
+            clip.Save();
+            // TODO: What about the queued item status?
+
+            string videoPath = await ExecuteWorkflowAsync(workflowJson); //, rowData, rowIndex);
+
+            if (!string.IsNullOrEmpty(videoPath))
+            {
+                clip.WorkflowJson = workflowJson; // Store for metadata extraction
+                clip.WorkflowPath = selectedWorkflow;
+                clip.VideoPath = videoPath;
             }
 
             return videoPath;
@@ -134,6 +204,33 @@ namespace iviewer.Services
                 .Replace("{HEIGHT}", height.ToString());
         }
 
+        private async Task<string> PrepareWorkflowAsync(string workflowPath, string prompt, string imagePath, string endImagePath, int width, int height)
+        {
+            string workflowJson = await File.ReadAllTextAsync(workflowPath);
+
+            if (width == 0 || height == 0)
+            {
+                (width, height) = ResolutionCalculator.Calculate(imagePath);
+            }
+
+            // Upload images and get server filenames
+            string startFilename = await UploadImageAsync(imagePath);
+            workflowJson = workflowJson.Replace("{START_IMAGE}", startFilename);
+
+            if (!string.IsNullOrEmpty(endImagePath))
+            {
+                string endFilename = await UploadImageAsync(endImagePath);
+                workflowJson = workflowJson.Replace("{END_IMAGE}", endFilename);
+            }
+
+            // Replace placeholders
+            return workflowJson
+                .Replace("{PROMPT}", prompt)
+                .Replace("{WIDTH}", width.ToString())
+                .Replace("{HEIGHT}", height.ToString());
+        }
+
+
         private async Task<string> UploadImageAsync(string imagePath)
         {
             string filename = Path.GetFileName(imagePath);
@@ -157,7 +254,7 @@ namespace iviewer.Services
             return result["name"]?.ToString() ?? filename;
         }
 
-        private async Task<string> ExecuteWorkflowAsync(string workflowJson, VideoRowData rowData, int rowIndex)
+        private async Task<string> ExecuteWorkflowAsync(string workflowJson)
         {
             var workflow = JObject.Parse(workflowJson);
             var payload = new JObject { ["prompt"] = workflow };
@@ -588,16 +685,16 @@ namespace iviewer.Helpers
             };
             grid.Columns.Add(colLora);
 
-            // Generate column
-            var colGenerate = new DataGridViewButtonColumn
+            // Queue column
+            var colQueue = new DataGridViewButtonColumn
             {
-                Name = "colGenerate",
+                Name = "colQueue",
                 HeaderText = "Action",
-                Text = "Generate",
+                Text = "Queue",
                 Width = 100,
                 UseColumnTextForButtonValue = false
             };
-            grid.Columns.Add(colGenerate);
+            grid.Columns.Add(colQueue);
 
             // Grid settings
             grid.RowHeadersVisible = false;
