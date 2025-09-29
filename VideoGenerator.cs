@@ -1,12 +1,13 @@
-﻿using System;
+﻿using iviewer.Helpers;
+using iviewer.Services;
+using System;
 using System.Collections.Generic;
+using System.Data;
 using System.Drawing;
 using System.IO;
 using System.Linq;
 using System.Threading.Tasks;
 using System.Windows.Forms;
-using iviewer.Services;
-using iviewer.Helpers;
 
 namespace iviewer
 {
@@ -1263,6 +1264,87 @@ namespace iviewer
         {
             public Color BackColor { get; set; }
             public Color ForeColor { get; set; }
+        }
+
+        #endregion
+
+        #region Load / Save state
+
+        public void SaveState()
+        {
+            var state = new VideoGenerationState
+            {
+                ImagePath = _rowImagePaths.FirstOrDefault() ?? string.Empty, // First clip's image for display
+                Width = _width,
+                Height = _height,
+                PreviewPath = _previewVideoPath,
+                TempFiles = string.Join(",", _tempFiles),
+                Status = "Queued" // Or calc based on clips
+            };
+            state.Save(); // Saves to DB, sets PK
+
+            for (int i = 0; i < dgvPrompts.Rows.Count; i++)
+            {
+                var clipState = new ClipGenerationState
+                {
+                    VideoGenerationStatePK = state.PK,
+                    ImagePath = _rowImagePaths.ElementAtOrDefault(i) ?? string.Empty,
+                    VideoPath = _perPromptVideoPaths.ElementAtOrDefault(i) ?? string.Empty,
+                    Prompt = dgvPrompts.Rows[i].Cells["colPrompt"].Value?.ToString() ?? string.Empty,
+                    WorkflowPath = _rowWorkflows.ElementAtOrDefault(i) ?? string.Empty,
+                    Status = "Queued",
+                    OrderIndex = i
+                };
+                clipState.Save();
+            }
+
+            MessageBox.Show($"State saved with PK: {state.PK}");
+        }
+
+        public void LoadState(Guid pk)
+        {
+            var state = VideoGenerationState.Load(pk);
+
+            _width = state.Width;
+            _height = state.Height;
+            _previewVideoPath = state.PreviewPath;
+            _tempFiles = state.TempFiles.Split(',').ToList();
+
+            // Clear grid/lists
+            dgvPrompts.Rows.Clear();
+            _rowImagePaths.Clear();
+            _perPromptVideoPaths.Clear();
+            _rowWorkflows.Clear();
+
+            foreach (var clipState in state.ClipGenerationStates)
+            {
+                int rowIndex = dgvPrompts.Rows.Add();
+                dgvPrompts.Rows[rowIndex].Cells["colPrompt"].Value = clipState.Prompt;
+                dgvPrompts.Rows[rowIndex].Cells["colLora"].Value = "Select LoRA";
+                dgvPrompts.Rows[rowIndex].Cells["colGenerate"].Value = "Generate";
+
+                string imgPath = clipState.ImagePath;
+                _rowImagePaths.Add(File.Exists(imgPath) ? imgPath : string.Empty);
+                if (File.Exists(imgPath))
+                {
+                    using (var img = System.Drawing.Image.FromFile(imgPath))
+                    {
+                        var thumb = new Bitmap(100, 100);
+                        using (var g = Graphics.FromImage(thumb))
+                        {
+                            g.DrawImage(img, new Rectangle(0, 0, 100, 100), new Rectangle(0, 0, img.Width, img.Height), GraphicsUnit.Pixel);
+                        }
+                        dgvPrompts.Rows[rowIndex].Cells["colImage"].Value = thumb;
+                    }
+                }
+
+                string vidPath = clipState.VideoPath;
+                _perPromptVideoPaths.Add(File.Exists(vidPath) ? vidPath : string.Empty);
+
+                _rowWorkflows.Add(clipState.WorkflowPath);
+            }
+
+            MessageBox.Show("State loaded.");
         }
 
         #endregion

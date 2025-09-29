@@ -4,6 +4,7 @@ using System.Data;
 using System.Linq;
 using System.Text;
 using System.Threading.Tasks;
+using static System.Windows.Forms.Design.AxImporter;
 
 namespace iviewer
 {
@@ -28,21 +29,57 @@ namespace iviewer
             return null;
         }
 
+        public static VideoGenerationState Load(Guid pk)
+        {
+            return Load($"SELECT * FROM VideoGenerationState WHERE PK = {DB.FormatDBValue(pk)}");
+        }
+
         public override string TableName => "VideoGenerationStates";
 
         #region Persistent Properties
 
-        public string ImagePath { get; private set; }
+        public string ImagePath { get; set; }
 
-        public int Width { get; private set; }
+        public int Width { get; set; }
 
-        public int Height { get; private set; }
+        public int Height { get; set; }
 
-        public string PreviewPath { get; private set; }
+        public string PreviewPath { get; set; }
 
-        public string TempFiles { get; private set; }
+        public string TempFiles { get; set; }
 
-        public string Status { get; private set; }
+        public string Status { get; set; }
+
+        #endregion
+
+        #region Clips
+
+        public List<ClipGenerationState> ClipGenerationStates
+        {
+            get
+            {
+                if (clipGenerationStates == null)
+                {
+                    var list = new List<ClipGenerationState>();
+                    if (IsInDatabase)
+                    {
+                        var sql = $"SELECT c.* FROM ClipGenerationStates c WITH (NOLOCK) WHERE VideoGenerationStatePK = {DB.FormatDBValue(PK)}";
+                        var table = DB.Select(sql);
+                        for (int i = 0; i < table.Rows.Count; i++)
+                        {
+                            var clip = new ClipGenerationState();
+                            clip.LoadFromRow(table.Rows[i]);
+                            list.Add(clip);
+                        }
+                    }
+
+                    clipGenerationStates = list;
+                }
+
+                return clipGenerationStates;
+            }
+        }
+        List<ClipGenerationState> clipGenerationStates;
 
         #endregion
 

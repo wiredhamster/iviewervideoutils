@@ -32,19 +32,19 @@ namespace iviewer
 
         #region Persistent Properties
 
-        public Guid VideoGenerationStatePK { get; private set; }
+        public Guid VideoGenerationStatePK { get; set; }
 
-        public string ImagePath { get; private set; }
+        public string ImagePath { get; set; }
 
-        public string VideoPath { get; private set; }
+        public string VideoPath { get; set; }
 
-        public string Prompt { get; private set; }
+        public string Prompt { get; set; }
 
-        public string WorkflowPath { get; private set; }
+        public string WorkflowPath { get; set; }
 
-        public string Status { get; private set; }
+        public string Status { get; set; }
 
-        public int OrderIndex { get; private set; }
+        public int OrderIndex { get; set; }
 
         #endregion
 
