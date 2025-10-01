@@ -135,7 +135,7 @@ namespace iviewer
                     var list = new List<ClipGenerationState>();
                     if (IsInDatabase)
                     {
-                        var sql = $"SELECT c.* FROM ClipGenerationStates c WITH (NOLOCK) WHERE VideoGenerationStatePK = {DB.FormatDBValue(PK)}";
+                        var sql = $"SELECT c.* FROM ClipGenerationStates c WITH (NOLOCK) WHERE VideoGenerationStatePK = {DB.FormatDBValue(PK)} ORDER BY OrderIndex";
                         var table = DB.Select(sql);
                         for (int i = 0; i < table.Rows.Count; i++)
                         {
@@ -185,7 +185,7 @@ namespace iviewer
         {
             base.SaveRelated();
 
-            foreach (var clip in clipGenerationStates)
+            foreach (var clip in ClipGenerationStates)
             {
                 clip.Save();
             }

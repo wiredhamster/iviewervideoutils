@@ -79,6 +79,8 @@ namespace iviewer
 		{
 			try
 			{
+				// My theory is that this hangs here if there is file contention due to failed deletes.
+				// I think we should move deleting temp files to the queue. And only raise an event to do it after closing the form.
 				if (mediaPlayer.IsPlaying)
 				{
 					var stopTask = Task.Run(() =>

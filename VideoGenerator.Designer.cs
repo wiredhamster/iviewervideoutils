@@ -54,6 +54,7 @@ namespace iviewer
             btnPlayAll = new Button();
             tabPageFullVideo = new TabPage();
             btnExport = new Button();
+            btnDeleteImage = new Button();
             tabControl.SuspendLayout();
             tabPageGeneration.SuspendLayout();
             ((System.ComponentModel.ISupportInitialize)dgvPrompts).BeginInit();
@@ -75,6 +76,7 @@ namespace iviewer
             // 
             // tabPageGeneration
             // 
+            tabPageGeneration.Controls.Add(btnDeleteImage);
             tabPageGeneration.Controls.Add(lblProgress);
             tabPageGeneration.Controls.Add(pbProgress);
             tabPageGeneration.Controls.Add(dgvPrompts);
@@ -285,6 +287,16 @@ namespace iviewer
             btnExport.UseVisualStyleBackColor = true;
             btnExport.Click += btnExport_Click;
             // 
+            // btnDeleteImage
+            // 
+            btnDeleteImage.Location = new Point(289, 6);
+            btnDeleteImage.Name = "btnDeleteImage";
+            btnDeleteImage.Size = new Size(105, 23);
+            btnDeleteImage.TabIndex = 9;
+            btnDeleteImage.Text = "- Delete Image";
+            btnDeleteImage.UseVisualStyleBackColor = true;
+            btnDeleteImage.Click += btnDeleteImage_Click;
+            // 
             // VideoGenerator
             // 
             AutoScaleDimensions = new SizeF(96F, 96F);
@@ -368,6 +380,11 @@ namespace iviewer
             OnPreviewClick();
         }
 
+        private void btnDeleteImage_Click(object sender, EventArgs e)
+        {
+            OnDeleteImage();
+        }
+
         private void InitializeVideoPlayers()
         {
             // Create video players programmatically since designer can't handle custom controls well
@@ -403,5 +420,6 @@ namespace iviewer
             StartPlayAllSequence();
         }
         private Button btnExport;
+        private Button btnDeleteImage;
     }
 }

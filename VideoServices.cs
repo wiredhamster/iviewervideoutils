@@ -2,17 +2,8 @@
 using iviewer.Helpers;
 using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
-using System;
-using System.Collections.Generic;
 using System.Diagnostics;
-using System.Drawing;
-using System.IO;
-using System.Linq;
-using System.Net.Http;
 using System.Text;
-using System.Threading.Tasks;
-using System.Windows.Forms;
-//using static System.Windows.Forms.VisualStyles.VisualStyleElement;
 
 namespace iviewer.Services
 {
@@ -39,23 +30,33 @@ namespace iviewer.Services
             {
                 if (clip.Status == "Queuing")
                 {
-                    // Load or create
-                    var item = VideoQueueItem.New();
-                    item.LoadFromSql($"SELECT * FROM VideoGenerationQueue WHERE ClipGenerationStatePK = {DB.FormatDBValue(clip.PK)}");
-
-                    // This seems defective. If the item isn't in the DB then it gets created anyway. But without the proper FK.
-                    if (item.ClipGenerationStatePK == Guid.Empty)
-                    {
-                        item.ClipGenerationStatePK = clip.PK;
-                    }
-
-                    item.Status = "Queued";
                     clip.Status = "Queued";
-
                     clip.Save();
-                    item.Save();
+
+                    EventBus.RaiseItemQueued(clip.PK);
                 }
             }
+
+            if (state.ClipGenerationStates.Any(c => c.Status == "Generating"))
+            {
+                state.Status = "Generating";
+            }
+            else if (state.ClipGenerationStates.Any(c => c.Status == "Queued"))
+            {
+                state.Status = "Queued";
+            }
+            else if (state.ClipGenerationStates.Any(c => c.Status == "Generated"))
+            {
+                state.Status = "Generated";
+            }
+            else
+            {
+                state.Status = "Unknown";
+            }
+
+            state.Save();
+
+            EventBus.RaiseItemQueued(Guid.Empty);
         }
 
         public async Task<string> GenerateVideoAsync(VideoRowData rowData, int rowIndex, int width, int height)
@@ -80,6 +81,12 @@ namespace iviewer.Services
             var video = VideoGenerationState.Load(clip.VideoGenerationStatePK);
             var endImagePath = "";
 
+            if (clip.ImagePath == "" || clip.Prompt == "")
+            {
+                clip.Status = "Failed";
+                return "";
+            }
+
             var thisClip = false;
             foreach (var item in video.ClipGenerationStates)
             {
@@ -103,7 +110,8 @@ namespace iviewer.Services
 
             clip.Status = "Generating";
             clip.Save();
-            // TODO: What about the queued item status?
+
+            EventBus.RaiseClipStatusChanged(clip.PK, clip.Status);
 
             string videoPath = await ExecuteWorkflowAsync(workflowJson); //, rowData, rowIndex);
 
@@ -710,55 +718,64 @@ namespace iviewer.Helpers
 
     public static class ImageHelper
     {
-        public static Bitmap CreateThumbnail(string imagePath, int width, int height)
+        public static Bitmap CreateThumbnail(string imagePath, int? width, int height)
         {
             try
             {
                 if (!File.Exists(imagePath))
                 {
-                    throw new FileNotFoundException($"Image file not found: {imagePath}");
+                    return null;
                 }
-
                 using var originalImage = System.Drawing.Image.FromFile(imagePath);
-                var thumbnail = new Bitmap(width, height);
 
+                // Calculate thumbnail dimensions
+                float sourceAspect = (float)originalImage.Width / originalImage.Height;
+                int thumbWidth = width ?? (int)(height * sourceAspect); // Use provided width or calculate based on height
+                int thumbHeight = height;
+
+                var thumbnail = new Bitmap(thumbWidth, thumbHeight);
                 using var graphics = Graphics.FromImage(thumbnail);
                 graphics.InterpolationMode = System.Drawing.Drawing2D.InterpolationMode.HighQualityBicubic;
                 graphics.SmoothingMode = System.Drawing.Drawing2D.SmoothingMode.HighQuality;
                 graphics.CompositingQuality = System.Drawing.Drawing2D.CompositingQuality.HighQuality;
 
-                // Calculate aspect ratio to maintain proportions
-                float sourceAspect = (float)originalImage.Width / originalImage.Height;
-                float destAspect = (float)width / height;
-
-                int drawWidth, drawHeight, drawX, drawY;
-
-                if (sourceAspect > destAspect)
+                if (width.HasValue)
                 {
-                    // Source is wider - fit to width
-                    drawWidth = width;
-                    drawHeight = (int)(width / sourceAspect);
-                    drawX = 0;
-                    drawY = (height - drawHeight) / 2;
+                    // Width provided: Fit to box with letterboxing if needed
+                    float destAspect = (float)width.Value / height;
+                    int drawWidth, drawHeight, drawX, drawY;
+                    if (sourceAspect > destAspect)
+                    {
+                        // Source wider - fit to width
+                        drawWidth = width.Value;
+                        drawHeight = (int)(width.Value / sourceAspect);
+                        drawX = 0;
+                        drawY = (height - drawHeight) / 2;
+                    }
+                    else
+                    {
+                        // Source taller - fit to height
+                        drawHeight = height;
+                        drawWidth = (int)(height * sourceAspect);
+                        drawY = 0;
+                        drawX = (width.Value - drawWidth) / 2;
+                    }
+                    graphics.Clear(Color.White); // Set background color
+                    graphics.DrawImage(originalImage, new Rectangle(drawX, drawY, drawWidth, drawHeight));
                 }
                 else
                 {
-                    // Source is taller - fit to height
-                    drawHeight = height;
-                    drawWidth = (int)(height * sourceAspect);
-                    drawY = 0;
-                    drawX = (width - drawWidth) / 2;
+                    // Width not provided: Scale to height, maintain aspect
+                    graphics.DrawImage(originalImage, new Rectangle(0, 0, thumbWidth, thumbHeight));
                 }
-
-                graphics.Clear(Color.White); // Set background color
-                graphics.DrawImage(originalImage, new Rectangle(drawX, drawY, drawWidth, drawHeight));
 
                 return thumbnail;
             }
             catch (Exception ex)
             {
                 // Return a placeholder thumbnail on error
-                var errorThumbnail = new Bitmap(width, height);
+                int thumbWidth = width ?? height; // Square fallback if width null
+                var errorThumbnail = new Bitmap(thumbWidth, height);
                 using var graphics = Graphics.FromImage(errorThumbnail);
                 graphics.Clear(Color.LightGray);
                 graphics.DrawString("Error", SystemFonts.DefaultFont, Brushes.Red, 10, height / 2 - 10);

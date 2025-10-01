@@ -24,6 +24,7 @@
 
         private DataGridView dgvVideos;
         private DataGridView dgvClips;
+        private Button btnAdd;
         private Button btnStart;
         private Button btnPause;
         private TabControl tabQueue;
@@ -39,6 +40,7 @@
             tabClips = new TabPage("Clips");
             dgvVideos = new DataGridView();
             dgvClips = new DataGridView();
+            btnAdd = new Button();
             btnStart = new Button();
             btnPause = new Button();
             tabQueue.SuspendLayout();
@@ -80,9 +82,10 @@
             dgvVideos.DoubleClick += DgvVideos_DoubleClick;
             // Columns (e.g., PK, ImagePath, Status, CreatedDate)
             dgvVideos.Columns.Add(new DataGridViewImageColumn { Name = "Image", HeaderText = "Image", ImageLayout = DataGridViewImageCellLayout.Zoom });
-            dgvVideos.Columns.Add(new DataGridViewTextBoxColumn { Name = "PK", HeaderText = "PK", ReadOnly = true });
+            //dgvVideos.Columns.Add(new DataGridViewTextBoxColumn { Name = "PK", HeaderText = "PK", ReadOnly = true });
             dgvVideos.Columns.Add(new DataGridViewTextBoxColumn { Name = "Status", HeaderText = "Status", ReadOnly = true });
             dgvVideos.Columns.Add(new DataGridViewTextBoxColumn { Name = "CreatedDate", HeaderText = "Created", ReadOnly = true });
+            dgvVideos.Columns.Add(new DataGridViewTextBoxColumn { Name = "ModifiedDate", HeaderText = "Modified", ReadOnly = true });
             // 
             // tabClips
             // 
@@ -106,18 +109,31 @@
             dgvClips.TabIndex = 0;
             dgvClips.DoubleClick += DgvClips_DoubleClick;
             // Columns (e.g., PK, VideoStatePK, Prompt, Status, CreatedDate)
-            dgvClips.Columns.Add(new DataGridViewTextBoxColumn { Name = "PK", HeaderText = "PK", ReadOnly = true });
-            dgvClips.Columns.Add(new DataGridViewTextBoxColumn { Name = "VideoStatePK", HeaderText = "Video PK", ReadOnly = true });
+            dgvClips.Columns.Add(new DataGridViewImageColumn { Name = "Image", HeaderText = "Image", ImageLayout = DataGridViewImageCellLayout.Zoom });
+            //dgvClips.Columns.Add(new DataGridViewTextBoxColumn { Name = "PK", HeaderText = "PK", ReadOnly = true });
+            //dgvClips.Columns.Add(new DataGridViewTextBoxColumn { Name = "VideoStatePK", HeaderText = "Video PK", ReadOnly = true });
             dgvClips.Columns.Add(new DataGridViewTextBoxColumn { Name = "Prompt", HeaderText = "Prompt", ReadOnly = true });
             dgvClips.Columns.Add(new DataGridViewTextBoxColumn { Name = "Status", HeaderText = "Status", ReadOnly = true });
             dgvClips.Columns.Add(new DataGridViewTextBoxColumn { Name = "CreatedDate", HeaderText = "Created", ReadOnly = true });
+            dgvClips.Columns.Add(new DataGridViewTextBoxColumn { Name = "ModifiedDate", HeaderText = "Modified", ReadOnly = true });
+            // 
+            // btnAdd
+            // 
+            btnAdd.Anchor = AnchorStyles.Top | AnchorStyles.Right;
+            btnAdd.Location = new Point(474, 2);
+            btnAdd.Name = "btnAdd";
+            btnAdd.Size = new Size(80, 28);
+            btnAdd.TabIndex = 1;
+            btnAdd.Text = "Add";
+            btnAdd.UseVisualStyleBackColor = true;
+            btnAdd.Click += BtnAdd_Click; ;
             // 
             // btnStart
             // 
             btnStart.Anchor = AnchorStyles.Top | AnchorStyles.Right;
-            btnStart.Location = new Point(600, 5);
+            btnStart.Location = new Point(560, 2);
             btnStart.Name = "btnStart";
-            btnStart.Size = new Size(80, 23);
+            btnStart.Size = new Size(80, 28);
             btnStart.TabIndex = 1;
             btnStart.Text = "Start";
             btnStart.UseVisualStyleBackColor = true;
@@ -126,9 +142,9 @@
             // btnPause
             // 
             btnPause.Anchor = AnchorStyles.Top | AnchorStyles.Right;
-            btnPause.Location = new Point(686, 5);
+            btnPause.Location = new Point(646, 2);
             btnPause.Name = "btnPause";
-            btnPause.Size = new Size(80, 23);
+            btnPause.Size = new Size(120, 28);
             btnPause.TabIndex = 2;
             btnPause.Text = "Pause";
             btnPause.UseVisualStyleBackColor = true;
@@ -137,6 +153,7 @@
             // QueueForm
             // 
             ClientSize = new Size(784, 561);
+            Controls.Add(btnAdd);
             Controls.Add(btnPause);
             Controls.Add(btnStart);
             Controls.Add(tabQueue);

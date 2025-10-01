@@ -18,7 +18,7 @@ namespace iviewer
 			GlobalFFOptions.Configure(options => options.BinaryFolder = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "ffmpeg"));
 		}
 
-		public static void ProcessFolder(string folder, string action)
+		public static async Task ProcessFolder(string folder, string action)
 		{
 			var inputPath = FileHandler.Instance.TranslatePath(folder);
 			var outputPath = FileHandler.Instance.TranslatePath($"{folder}\\processed");
@@ -40,6 +40,9 @@ namespace iviewer
 							case "upscaleandinterpolate":
 								result = UpscaleAndInterpolateVideo(inputFile, outputFile);
 								break;
+                            case "interpolate":
+                                result = UpscaleAndInterpolateVideo(inputFile, outputFile, false, true);
+                                break;
 							case "extractframes":
 								result = ExtractFrames(inputFile, outputPath);
 								break;
@@ -86,7 +89,7 @@ namespace iviewer
 			}
 		}
 
-        public static async Task<bool> UpscaleAndInterpolateVideoAsync(string inputFile, string outputFile)
+        public static async Task<bool> UpscaleAndInterpolateVideoAsync(string inputFile, string outputFile, bool upscale = true, bool interpolate = true)
         {
             try
             {
@@ -94,6 +97,7 @@ namespace iviewer
                 var height = 0;
                 var fps = 0;
                 var args = new StringBuilder();
+                var result = false;
 
                 if (Path.GetExtension(inputFile).Equals(".mp4", StringComparison.OrdinalIgnoreCase))
                 {
@@ -104,15 +108,15 @@ namespace iviewer
                         var newFps = fps;
 
                         // Calculate new height (upscale if <= 1080p)
-                        if (height <= 1080)
+                        if (height <= 1080 && upscale)
                         {
                             newHeight = height * 2;
                         }
 
                         // Calculate new fps (interpolate if < 30fps)
-                        if (fps < 15)
+                        if (fps < 15 && interpolate)
                         {
-                            newFps = fps * 4;
+                            newFps = fps * 3;
                         }
                         else if (fps < 30)
                         {
@@ -145,20 +149,19 @@ namespace iviewer
                 {
                     // Process video with filters
                     var ffmpegArgs = $"-vf {args.ToString()}";
-                    var result = await FFMpegArguments
+                    result = await FFMpegArguments
                         .FromFileInput(inputFile)
                         .OutputToFile(outputFile, true, options => options
                             .WithCustomArgument(ffmpegArgs))
                         .ProcessAsynchronously();
-
-                    return result;
                 }
                 else
                 {
                     // No processing required. Just copy the file.
                     await Task.Run(() => File.Copy(inputFile, outputFile, overwrite: true));
-                    return true;
                 }
+
+                return result;
             }
             catch (Exception ex)
             {
@@ -173,9 +176,9 @@ namespace iviewer
         /// <param name="inputFile">Path to the input video file</param>
         /// <param name="outputFile">Path to the output video file</param>
         /// <returns>True if processing succeeded, false otherwise</returns>
-        public static bool UpscaleAndInterpolateVideo(string inputFile, string outputFile)
+        public static bool UpscaleAndInterpolateVideo(string inputFile, string outputFile, bool upscale = true, bool interpolate = true)
         {
-            return UpscaleAndInterpolateVideoAsync(inputFile, outputFile).Result;
+            return UpscaleAndInterpolateVideoAsync(inputFile, outputFile, upscale, interpolate).Result;
         }
 
         /// <summary>
