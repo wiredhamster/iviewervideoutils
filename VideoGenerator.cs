@@ -45,7 +45,9 @@ namespace iviewer
         // Transition settings - modify these to experiment with different types
         public const string TRANSITION_TYPE = "fade"; // Options: "fade", "dissolve", "wipe", "slide"
         private const double DEFAULT_TRANSITION_DURATION = 0.1; // Default duration in seconds
+        private const double DEFAULT_CLIP_SPEED = 1.0;
         private List<double> _transitionDurations = new List<double>();
+        private List<double> _clipSpeeds = new List<double>();
 
         private enum GenerationStatus
         {
@@ -129,6 +131,11 @@ namespace iviewer
             if (_transitionDurations.Count >= insertIndex)
             {
                 _transitionDurations.Insert(insertIndex, DEFAULT_TRANSITION_DURATION);
+            }
+
+            if (_clipSpeeds.Count >= insertIndex)
+            {
+                _clipSpeeds.Insert(insertIndex, DEFAULT_CLIP_SPEED);
             }
 
             // Set initial status
@@ -368,6 +375,11 @@ namespace iviewer
                     _transitionDurations.RemoveAt(rowIndex);
                 }
 
+                if (_clipSpeeds.Count > rowIndex)
+                {
+                    _clipSpeeds.RemoveAt(rowIndex);
+                }
+
                 EventBus.RaiseItemQueued(Guid.Empty);
 
                 UpdateState();
@@ -443,8 +455,6 @@ namespace iviewer
 
         private void LoadPreviewTabs()
         {
-            var validVideos = _perPromptVideoPaths.Where(p => !string.IsNullOrEmpty(p) && File.Exists(p)).ToList();
-
             // Load Full Video tab
             if (!string.IsNullOrEmpty(_previewVideoPath) && File.Exists(_previewVideoPath))
             {
@@ -452,21 +462,24 @@ namespace iviewer
             }
 
             // Load Per-Prompt Videos tab
-            LoadPerPromptVideosTab(validVideos);
+            LoadPerPromptVideosTab();
         }
 
-        private void LoadPerPromptVideosTab(List<string> validVideos)
+        private void LoadPerPromptVideosTab()
         {
             _videoButtons.Clear();
 
             EnsureTransitionDurationsPopulated();
+            EnsureClipSpeedsPopulated();
 
             var flowPanel = VideoPlayerHelper.CreateVideoButtonsPanel(
-                validVideos,
+                _perPromptVideoPaths,
                 GenerateClipInfos(),
                 OnVideoButtonClick,
                 _transitionDurations,
                 OnTransitionDurationChanged,
+                _clipSpeeds,
+                OnClipSpeedChanged,
                 _videoButtons);
 
             // Configure flow panel to not overlap buttons
@@ -507,24 +520,45 @@ namespace iviewer
             }
         }
 
+        private void OnClipSpeedChanged(int clipIndex, double speed)
+        {
+            if (clipIndex >= 0 && clipIndex < _clipSpeeds.Count)
+            {
+                _clipSpeeds[clipIndex] = speed;
+            }
+        }
+
         private void EnsureTransitionDurationsPopulated()
         {
-            int validVideoCount = _perPromptVideoPaths.Count(p => !string.IsNullOrEmpty(p) && File.Exists(p));
-
             // Ensure we have enough transition duration entries
-            while (_transitionDurations.Count < validVideoCount)
+            while (_transitionDurations.Count < _perPromptVideoPaths.Count)
             {
                 _transitionDurations.Add(DEFAULT_TRANSITION_DURATION);
             }
 
             // Remove excess entries if we have too many
-            while (_transitionDurations.Count > validVideoCount)
+            while (_transitionDurations.Count > _perPromptVideoPaths.Count)
             {
                 _transitionDurations.RemoveAt(_transitionDurations.Count - 1);
             }
         }
 
-        private void LoadVideoInPlayer(VideoPlayerControl player, string videoPath, ref FileStream streamRef)
+        private void EnsureClipSpeedsPopulated()
+        {
+            // Ensure we have enough clip speed entries
+            while (_clipSpeeds.Count < _perPromptVideoPaths.Count)
+            {
+                _clipSpeeds.Add(DEFAULT_CLIP_SPEED);
+            }
+
+            // Remove excess entries if we have too many
+            while (_clipSpeeds.Count > _perPromptVideoPaths.Count)
+            {
+                _clipSpeeds.RemoveAt(_clipSpeeds.Count - 1);
+            }
+        }
+
+        private void LoadVideoInPlayer(VideoPlayerControl player, string videoPath, ref FileStream streamRef, double speed = 1)
         {
             try
             {
@@ -543,6 +577,7 @@ namespace iviewer
                 // Create new stream and assign
                 streamRef = new FileStream(normalizedPath, FileMode.Open, FileAccess.Read);
                 player.VideoStream = streamRef;
+                player.SetSpeed(speed);
 
                 btnExport.BringToFront();
                 UpdateButtonStates();
@@ -553,7 +588,7 @@ namespace iviewer
             }
         }
 
-        private void OnVideoButtonClick(int videoIndex, string videoPath)
+        private void OnVideoButtonClick(int videoIndex, string videoPath, double speed)
         {
             // If playing all, stop the sequence
             if (_isPlayingAll)
@@ -587,7 +622,7 @@ namespace iviewer
                 });
             }
 
-            LoadVideoInPlayer(videoPlayerPerPrompt, videoPath, ref _perPromptStream);
+            LoadVideoInPlayer(videoPlayerPerPrompt, videoPath, ref _perPromptStream, speed);
         }
 
         #endregion
@@ -602,17 +637,18 @@ namespace iviewer
 
             try
             {
-                var validVideos = _perPromptVideoPaths.Where(p => !string.IsNullOrEmpty(p) && File.Exists(p)).ToList();
-
                 string previewFilename = $"preview_{DateTime.Now:yyyyMMdd_HHmmss}.mp4";
                 string previewPath = Path.Combine(_fileService.TempDir, previewFilename);
 
                 // Create preview with transitions but without upscaling/interpolation
                 bool success = await VideoUtils.StitchVideosWithTransitionsAsync(
-                    validVideos,
+                    _perPromptVideoPaths,
                     previewPath,
                     TRANSITION_TYPE,
-                    _transitionDurations);
+                    _transitionDurations,
+                    _clipSpeeds, 
+                    true,
+                    false);
 
                 if (success)
                 {
@@ -753,6 +789,7 @@ namespace iviewer
                     _rowImagePaths.Add("");
                     _rowWorkflows.Add("");
                     _transitionDurations.Add(DEFAULT_TRANSITION_DURATION);
+                    _clipSpeeds.Add(DEFAULT_CLIP_SPEED);
 
                     // Add grid row
                     int rowIndex = dgvPrompts.Rows.Add();
@@ -1309,10 +1346,10 @@ namespace iviewer
                 HighlightCurrentVideoButton(_currentPlayAllIndex);
 
                 // Load and play the video
-                LoadVideoInPlayer(videoPlayerPerPrompt, videoPath, ref _perPromptStream);
+                LoadVideoInPlayer(videoPlayerPerPrompt, videoPath, ref _perPromptStream, _clipSpeeds[_currentPlayAllIndex]);
 
                 // Get video duration and wait for it to complete
-                double videoDuration = VideoUtils.GetVideoDuration(videoPath);
+                double videoDuration = VideoUtils.GetVideoDuration(videoPath) / _clipSpeeds[_currentPlayAllIndex];
 
                 // Wait for video to complete (with small buffer)
                 await Task.Delay(TimeSpan.FromSeconds(videoDuration + 0.2));

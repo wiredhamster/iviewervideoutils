@@ -131,11 +131,13 @@ namespace iviewer
             dgvPrompts.DefaultCellStyle = dataGridViewCellStyle2;
             dgvPrompts.Location = new Point(6, 35);
             dgvPrompts.Name = "dgvPrompts";
-            dgvPrompts.RowHeadersVisible = false;
             dgvPrompts.RowTemplate.Height = 160;
             dgvPrompts.SelectionMode = DataGridViewSelectionMode.FullRowSelect;
             dgvPrompts.Size = new Size(980, 578);
             dgvPrompts.TabIndex = 6;
+            dgvPrompts.RowHeadersVisible = true;
+            dgvPrompts.RowHeadersWidth = 50;
+            dgvPrompts.RowPostPaint += dgvPrompts_RowPostPaint;
             // 
             // colImage
             // 
@@ -383,6 +385,21 @@ namespace iviewer
         private void btnDeleteImage_Click(object sender, EventArgs e)
         {
             OnDeleteImage();
+        }
+
+        private void dgvPrompts_RowPostPaint(object sender, DataGridViewRowPostPaintEventArgs e)
+        {
+            var grid = sender as DataGridView;
+            string rowIdx = (e.RowIndex + 1).ToString(); // 1-based index
+
+            var centerFormat = new StringFormat
+            {
+                Alignment = StringAlignment.Center,
+                LineAlignment = StringAlignment.Center
+            };
+
+            var headerBounds = new Rectangle(e.RowBounds.Left, e.RowBounds.Top, grid.RowHeadersWidth, e.RowBounds.Height);
+            e.Graphics.DrawString(rowIdx, grid.Font, SystemBrushes.ControlText, headerBounds, centerFormat);
         }
 
         private void InitializeVideoPlayers()

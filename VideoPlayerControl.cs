@@ -73,7 +73,16 @@ namespace iviewer
 			}
 
 			mediaPlayer.Play(currentMedia);
+			mediaPlayer.SetRate(1f); // Required as Rate is saved for the lifetime of the player
 		}
+
+		public void SetSpeed(double speed)
+		{
+            if (speed != 1)
+            {
+                mediaPlayer.SetRate((float)speed);
+            }
+        }
 
 		public async void StopAndHide()
 		{

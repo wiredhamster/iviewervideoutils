@@ -218,49 +218,52 @@ namespace iviewer
 			return true;
 		}
 
-        //     public static string ExtractLastFrame(string inputVideoPath)
-        //     {
-        //         if (!File.Exists(inputVideoPath))
-        //         {
-        //             throw new FileNotFoundException("Input video file not found.", inputVideoPath);
-        //         }
+        private static async Task<string> AdjustSpeedAsync(string inputPath, double speed)
+        {
+            if (Math.Abs(speed - 1.0) < 0.001) return inputPath; // No adjustment needed
 
-        //var outputDirectory = Path.Combine(Path.GetDirectoryName(inputVideoPath), "temp_frames");
-        //         if (!Directory.Exists(outputDirectory))
-        //         {
-        //             Directory.CreateDirectory(outputDirectory);
-        //         }
+            // Probe original FPS (assume consistent across clips)
+            var mediaInfo = await FFProbe.AnalyseAsync(inputPath);
+            double originalFps = mediaInfo.PrimaryVideoStream.FrameRate;
 
-        //         var filename = Path.GetFileNameWithoutExtension(inputVideoPath);
-        //         string outputPath = Path.Combine(outputDirectory, $"{filename}_lastframe.png");
+            // Create temp output path
+            string tempOutput = Path.ChangeExtension(Path.GetTempFileName(), ".mp4");
 
-        //         try
-        //         {
-        //             // Analyse video duration
-        //             var mediaInfo = FFProbe.Analyse(inputVideoPath);
-        //             var duration = mediaInfo.Duration;
+            // Build custom filter string
+            string vfArg = string.Empty;
+            double N = 1.0 / speed; // Slowdown factor (N>1 for slow, N<1 for fast)
 
-        //             // Seek a little before the end (avoid going past the last keyframe)
-        //             var seekTime = duration - TimeSpan.FromSeconds(0.5);
-        //             if (seekTime < TimeSpan.Zero)
-        //                 seekTime = TimeSpan.Zero;
+            if (speed > 1.0)
+            {
+                // Faster: Accelerate timestamps (drops frames)
+                vfArg = $"setpts=PTS*{N}";
+            }
+            else if (speed < 1.0)
+            {
+                // Slower: Interpolate to high FPS, then stretch PTS for smooth slow-mo
+                double interpFps = originalFps * N;
+                vfArg = $"minterpolate=fps={interpFps},setpts=PTS*{N}";
+            }
 
-        //             FFMpegArguments
-        //		.FromFileInput(inputVideoPath)
-        //		.OutputToFile(outputPath, true, options => options
-        //			.Seek(seekTime)                 
-        //			.WithFrameOutputCount(1)
-        //			.WithVideoCodec(VideoCodec.Png))
-        //		.ProcessSynchronously();
+            await FFMpegArguments
+                .FromFileInput(inputPath)
+                .OutputToFile(tempOutput, true, opt =>
+                {
+                    if (!string.IsNullOrEmpty(vfArg))
+                    {
+                        opt.WithCustomArgument($"-vf \"{vfArg}\"");
+                    }
 
-        //             return outputPath;
-        //         }
-        //         catch (Exception ex)
-        //         {
-        //             // Log or handle error as needed (e.g., Debug.WriteLine(ex.Message));
-        //             return null;
-        //         }
-        //     }
+                    // Force output FPS to original (critical for matching in stitch)
+                    opt.WithFramerate(originalFps);
+
+                    // No audio
+                    opt.DisableChannel(Channel.Audio);
+                })
+                .ProcessAsynchronously();
+
+            return tempOutput;
+        }
 
         public static string ExtractLastFrame(string inputVideoPath, string outputDirectory)
         {
@@ -348,27 +351,77 @@ namespace iviewer
                 return 0;
             }
         }
+
         public static async Task<bool> StitchVideosWithTransitionsAsync(
             List<string> inputVideoPaths,
             string outputPath,
             string transitionType,
             List<double> transitionDurations,
+            List<double>? speeds = null,
             bool deleteIntermediateFiles = true)
         {
             try
             {
-                if (inputVideoPaths.Count == 1)
+                if (inputVideoPaths.Count == 1 && !string.IsNullOrEmpty(inputVideoPaths[0]) && File.Exists(inputVideoPaths[0]))
                 {
                     File.Copy(inputVideoPaths[0], outputPath, true);
                     return true;
                 }
 
-                // Check if any transitions
-                bool hasTransitions = transitionDurations?.Any(d => d > 0) == true;
-                if (!hasTransitions || transitionDurations.Count < inputVideoPaths.Count - 1)
+                // Default speeds if not provided
+                if (speeds == null || speeds.Count < inputVideoPaths.Count)
                 {
-                    // Fallback or error
-                    return await StitchVideosAsync(inputVideoPaths, outputPath, deleteIntermediateFiles); // Your existing no-transition stitch
+                    speeds = Enumerable.Repeat(1.0, inputVideoPaths.Count).ToList();
+                }
+
+                // Pre-process clips for speed adjustments
+                var adjustedPaths = new List<string>();
+                var tempFiles = new List<string>();
+                for (int i = 0; i < inputVideoPaths.Count; i++)
+                {
+                    string adjusted = await AdjustSpeedAsync(inputVideoPaths[i], speeds[i]);
+                    adjustedPaths.Add(adjusted);
+                    if (adjusted != inputVideoPaths[i])
+                    {
+                        tempFiles.Add(adjusted);
+                    }
+                }
+
+                // Handle trimLastFrame on adjusted paths if transition duration is 0
+                for (int i = 0; i < adjustedPaths.Count - 1; i++) // Skip last
+                {
+                    if (transitionDurations[i] == 0 && !string.IsNullOrEmpty(inputVideoPaths[0]) && File.Exists(inputVideoPaths[0]))
+                    {
+                        var info = await FFProbe.AnalyseAsync(adjustedPaths[i]);
+                        double fps = info.PrimaryVideoStream.FrameRate;
+                        double duration = info.Duration.TotalSeconds - (1.0 / fps);
+                        string trimmedTemp = Path.ChangeExtension(Path.GetTempFileName(), ".mp4");
+                        await FFMpegArguments
+                            .FromFileInput(adjustedPaths[i])
+                            .OutputToFile(trimmedTemp, true, options =>
+                            {
+                                options.WithDuration(TimeSpan.FromSeconds(duration));
+                                options.CopyChannel();
+                            })
+                            .ProcessAsynchronously();
+                        if (deleteIntermediateFiles && adjustedPaths[i] != inputVideoPaths[i])
+                        {
+                            tempFiles.Remove(adjustedPaths[i]); // Will delete original adjusted
+                            File.Delete(adjustedPaths[i]);
+                        }
+                        adjustedPaths[i] = trimmedTemp;
+                        tempFiles.Add(trimmedTemp);
+                    }
+                }
+
+                // Pad transitionDurations with 0s if short/null
+                if (transitionDurations == null)
+                {
+                    transitionDurations = new List<double>();
+                }
+                while (transitionDurations.Count < adjustedPaths.Count - 1)
+                {
+                    transitionDurations.Add(0.0);
                 }
 
                 // Create output dir
@@ -376,7 +429,36 @@ namespace iviewer
                 if (!string.IsNullOrEmpty(outputDir) && !Directory.Exists(outputDir))
                     Directory.CreateDirectory(outputDir);
 
-                return await StitchWithUniformTransitions(inputVideoPaths, outputPath, transitionType, transitionDurations);
+                // Optimization: If all durations=0 and specs match, use demuxer
+                // TODO: This will crash if any video files are not valid.
+                bool allZero = transitionDurations.All(d => d == 0.0);
+                var mediaInfos = await Task.WhenAll(adjustedPaths.Select(p => FFProbe.AnalyseAsync(p)));
+                bool sameSpecs = mediaInfos.All(info =>
+                    info.PrimaryVideoStream.Width == mediaInfos[0].PrimaryVideoStream.Width &&
+                    info.PrimaryVideoStream.Height == mediaInfos[0].PrimaryVideoStream.Height &&
+                    info.PrimaryVideoStream.CodecName == mediaInfos[0].PrimaryVideoStream.CodecName);
+
+                bool success;
+                if (allZero && sameSpecs)
+                {
+                    success = await ConcatWithDemuxer(adjustedPaths, outputPath, false); // Don't delete yet
+                }
+                else
+                {
+                    success = await StitchWithTransitions(adjustedPaths, outputPath, transitionType, transitionDurations);
+                }
+
+                // Cleanup temps
+                if (deleteIntermediateFiles && success)
+                {
+                    foreach (var temp in tempFiles.Where(File.Exists))
+                    {
+                        var x = FFProbe.Analyse(temp);
+                        try { File.Delete(temp); } catch { }
+                    }
+                }
+
+                return success;
             }
             catch (Exception ex)
             {
@@ -385,7 +467,7 @@ namespace iviewer
             }
         }
 
-        private static async Task<bool> StitchWithUniformTransitions(
+        private static async Task<bool> StitchWithTransitions(
             List<string> inputVideoPaths,
             string outputPath,
             string transitionType,
@@ -457,150 +539,6 @@ namespace iviewer
             catch (Exception ex)
             {
                 Console.WriteLine($"Error in uniform transition stitching: {ex.Message}");
-                return false;
-            }
-        }
-
-        //public static async Task<bool> StitchWithUniformTransitions(List<string> videoPaths, string outputPath, string transitionType, List<double> transitionDurations)
-        //{
-        //    if (videoPaths.Count == 0) return false;
-        //    if (videoPaths.Count == 1)
-        //    {
-        //        File.Copy(videoPaths[0], outputPath, true);
-        //        return true;
-        //    }
-
-        //    // Probe durations for offset calculation
-        //    var durations = new List<double>();
-        //    foreach (var path in videoPaths)
-        //    {
-        //        durations.Add(GetVideoDuration(path));
-        //    }
-
-        //    // Build filter_complex for chained transitions
-        //    var filterComplex = new StringBuilder();
-        //    filterComplex.Append("[0:v]setpts=PTS-STARTPTS[v0];"); // Label first
-        //    double currentOffset = 0;
-        //    for (int i = 1; i < videoPaths.Count; i++)
-        //    {
-        //        filterComplex.Append($"[{i}:v]setpts=PTS-STARTPTS[v{i}];");
-        //        string trans = transitionType switch
-        //        {
-        //            "fade" => $"xfade=transition=fade:duration={transitionDurations[i]}:offset={currentOffset}",
-        //            // Add more: TransitionType.WipeLeft => "xfade=transition=wipeleft:duration={transitionDuration}:offset={currentOffset}"
-        //            _ => throw new NotSupportedException("Unsupported transition type")
-        //        };
-        //        filterComplex.Append($"[v{i - 1}][v{i}]{trans}[tmp{i}];");
-        //        currentOffset += durations[i - 1] - transitionDurations[i]; // Overlap by duration
-        //        if (currentOffset < 0) throw new Exception("Transition duration longer than clip—reduce duration.");
-        //    }
-        //    filterComplex.Append($"[tmp{videoPaths.Count - 1}]setpts=PTS-STARTPTS[outv]"); // Final output
-
-        //    // Run FFmpeg
-        //    var psi = new ProcessStartInfo
-        //    {
-        //        FileName = "ffmpeg",
-        //        Arguments = string.Join(" ", videoPaths.Select((p, i) => $"-i \"{p}\" ")) +
-        //                    $"-filter_complex \"{filterComplex}\" -map \"[outv]\" -c:v libx264 -preset medium -crf 23 \"{outputPath}\" -y",
-        //        RedirectStandardOutput = true,
-        //        RedirectStandardError = true,
-        //        UseShellExecute = false,
-        //        CreateNoWindow = true
-        //    };
-        //    using (var proc = Process.Start(psi))
-        //    {
-        //        await proc.WaitForExitAsync();
-        //        if (proc.ExitCode != 0)
-        //        {
-        //            string error = await proc.StandardError.ReadToEndAsync();
-        //            throw new Exception(error);
-        //        }
-        //    }
-
-        //    return File.Exists(outputPath);
-        //}
-
-        public static async Task<bool> StitchVideosAsync(List<string> inputVideoPaths,
-            string outputPath,
-            bool deleteIntermediateFiles = true,
-            bool trimLastFrame = true)
-        {
-            try
-            {
-                if (string.IsNullOrWhiteSpace(outputPath))
-                    throw new ArgumentException("Output path cannot be empty");
-
-                // Check if all input files exist
-                foreach (string path in inputVideoPaths)
-                {
-                    if (!File.Exists(path))
-                        throw new FileNotFoundException($"Input file not found: {path}");
-                }
-
-                // Create output directory if it doesn't exist
-                string outputDir = Path.GetDirectoryName(outputPath);
-                if (!string.IsNullOrEmpty(outputDir) && !Directory.Exists(outputDir))
-                    Directory.CreateDirectory(outputDir);
-
-                if (inputVideoPaths.Count == 1)
-                {
-                    File.Copy(inputVideoPaths[0], outputPath, true);
-                    return true;
-                }
-
-                if (trimLastFrame)
-                {
-                    //Create temp trimmed clips (drop last frame)
-                    var tempClips = new List<string>();
-                    for (int i = 0; i < inputVideoPaths.Count - 1; i++) // Skip last (no trim)
-                    {
-                        var info = FFProbe.Analyse(inputVideoPaths[i]);
-                        var fps = info.PrimaryVideoStream.FrameRate;
-                        var duration = info.Duration.TotalSeconds - (1.0 / fps); // Trim ~1 frame
-                        var tempClip = Path.GetTempFileName() + ".mp4";
-                        await FFMpegArguments
-                            .FromFileInput(inputVideoPaths[i])
-                            .OutputToFile(tempClip, overwrite: true, options =>
-                            {
-                                options.WithDuration(TimeSpan.FromSeconds(duration)); // Trim end
-                                options.CopyChannel(); // Fast copy, no re-encode
-                            })
-                            .ProcessAsynchronously();
-                        tempClips.Add(tempClip);
-                    }
-                    tempClips.Add(inputVideoPaths.Last()); // Full last clip
-                    inputVideoPaths = tempClips;
-                }
-
-                // Method 1: Using FFMpeg concat filter (recommended for same format/codec)
-                var mediaInfos = inputVideoPaths.Select(path => FFProbe.Analyse(path)).ToList();
-
-                // Check if all videos have the same resolution and codec
-                bool sameSpecs = mediaInfos.All(info =>
-                    info.PrimaryVideoStream.Width == mediaInfos[0].PrimaryVideoStream.Width &&
-                    info.PrimaryVideoStream.Height == mediaInfos[0].PrimaryVideoStream.Height &&
-                    info.PrimaryVideoStream.CodecName == mediaInfos[0].PrimaryVideoStream.CodecName);
-
-                if (sameSpecs)
-                {
-                    // Use concat demuxer for identical specs (faster, no re-encoding)
-                    return await ConcatWithDemuxer(inputVideoPaths, outputPath, deleteIntermediateFiles);
-                }
-                else
-                {
-                    // Why different specs?
-                    foreach (var info in mediaInfos)
-                    {
-                        Debug.WriteLine($"{info.PrimaryVideoStream.Width}x{info.PrimaryVideoStream.Height} ({info.PrimaryVideoStream.CodecName})");
-                    }
-
-                    // Use concat filter for different specs (slower, requires re-encoding)
-                    return await ConcatWithFilter(inputVideoPaths, outputPath);
-                }
-            }
-            catch (Exception ex)
-            {
-                Console.WriteLine($"Error stitching videos: {ex.Message}");
                 return false;
             }
         }
@@ -696,17 +634,6 @@ namespace iviewer
                 .ProcessAsynchronously();
 
             return result;
-        }
-
-        /// <summary>
-        /// Synchronous version of StitchVideosAsync
-        /// </summary>
-        public static bool StitchVideos(
-            List<string> inputVideoPaths,
-            string outputPath,
-            bool deleteIntermediateFiles = true)
-        {
-            return StitchVideosAsync(inputVideoPaths, outputPath, deleteIntermediateFiles).Result;
         }
     }
 }

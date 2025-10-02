@@ -335,6 +335,7 @@ namespace iviewer.Services
         }
     }
 
+    // Not used?
     public class VideoExportService
     {
         private readonly VideoGenerationConfig _config;
@@ -342,74 +343,6 @@ namespace iviewer.Services
         public VideoExportService(VideoGenerationConfig config)
         {
             _config = config;
-        }
-
-        // Not used?
-        public async Task<string> ExportVideosAsync(VideoExportData exportData, Action<int> onProgress)
-        {
-            Directory.CreateDirectory(_config.ExportDir);
-
-            string filename = exportData.ExportTimestamp.ToString("yyyyMMdd-HHmmss");
-            string stitchedPath = Path.Combine(_config.TempDir, filename + "_stitched.mp4");
-            string tempPath = Path.Combine(_config.TempDir, filename + ".mp4");
-            string exportPath = Path.Combine(_config.ExportDir, filename + ".mp4");
-            string metaPath = Path.Combine(_config.ExportDir, filename + ".json");
-
-            try
-            {
-                onProgress(25);
-                bool success = await VideoUtils.StitchVideosWithTransitionsAsync(
-                    exportData.VideoPaths, 
-                    stitchedPath,
-                    exportData.TransitionType,
-                    exportData.TransitionDurations);
-
-                if (!success)
-                {
-                    throw new Exception("Video stitching failed");
-                }
-
-                onProgress(50);
-                success = await VideoUtils.UpscaleAndInterpolateVideoAsync(stitchedPath, tempPath);
-
-                if (!success)
-                {
-                    throw new Exception("Video processing failed");
-                }
-
-                onProgress(75);
-                await ExportMetadataAsync(exportData.ClipInfos, metaPath);
-
-                File.Copy(tempPath, exportPath, overwrite: true);
-                onProgress(100);
-
-                // Cleanup temp files
-                File.Delete(stitchedPath);
-                File.Delete(tempPath);
-
-                return exportPath;
-            }
-            catch
-            {
-                // Cleanup on failure
-                if (File.Exists(stitchedPath)) File.Delete(stitchedPath);
-                if (File.Exists(tempPath)) File.Delete(tempPath);
-                throw;
-            }
-        }
-
-        private async Task ExportMetadataAsync(List<VideoClipInfo> clipInfos, string metaPath)
-        {
-            var source = clipInfos.FirstOrDefault(c => Guid.TryParse(c.Source, out _))?.Source;
-
-            var jsonData = new
-            {
-                Source = Guid.TryParse(source, out _) ? Guid.Parse(source) : Guid.NewGuid(),
-                ClipInfos = clipInfos
-            };
-
-            string json = JsonConvert.SerializeObject(jsonData, Formatting.Indented);
-            await File.WriteAllTextAsync(metaPath, json);
         }
     }
 
@@ -818,9 +751,11 @@ namespace iviewer.Helpers
         public static FlowLayoutPanel CreateVideoButtonsPanel(
             List<string> videoPaths,
             List<VideoClipInfo> clipInfos,
-            Action<int, string> onVideoClick,
+            Action<int, string, double> onVideoClick,
             List<double> transitionDurations,
             Action<int, double> onTransitionDurationChanged,
+            List<double> clipSpeeds,
+            Action<int, double> onClipSpeedChanged,
             List<Button> buttonTracker = null)
         {
             var flowPanel = new FlowLayoutPanel
@@ -833,8 +768,6 @@ namespace iviewer.Helpers
 
             for (int i = 0; i < videoPaths.Count; i++)
             {
-                if (!File.Exists(videoPaths[i])) continue;
-
                 var info = clipInfos.Count > i ? clipInfos[i] : new VideoClipInfo();
                 int currentIndex = i; // Capture for closure
 
@@ -844,9 +777,15 @@ namespace iviewer.Helpers
                     Width = 200,
                     Height = 50,
                     Margin = new Padding(5),
-                    Tag = i
+                    Tag = i,
+                    Enabled = false
                 };
-                btnPlay.Click += (s, e) => onVideoClick(currentIndex, videoPaths[currentIndex]);
+
+                if (videoPaths[i] != null && File.Exists(videoPaths[i]))
+                {
+                    btnPlay.Click += (s, e) => onVideoClick(currentIndex, videoPaths[currentIndex], clipSpeeds[currentIndex]);
+                    btnPlay.Enabled = true;
+                }
 
                 flowPanel.Controls.Add(btnPlay);
 
@@ -876,6 +815,28 @@ namespace iviewer.Helpers
 
                     flowPanel.Controls.Add(txtDuration);
                 }
+
+                // Add speed controls
+                var txtSpeed = new TextBox
+                {
+                    Size = new Size(40, 20),
+                    Text = clipSpeeds[i].ToString(),
+                    BackColor = Color.LightCyan
+                };
+
+                txtSpeed.TextChanged += (s, e) => {
+                    if (double.TryParse(txtSpeed.Text, out double newSpeed) && newSpeed > 0 && newSpeed <= 5)
+                    {
+                        onClipSpeedChanged(currentIndex, newSpeed);
+                        txtSpeed.BackColor = Color.LightCyan;
+                    }
+                    else
+                    {
+                        txtSpeed.BackColor = Color.LightPink;
+                    }
+                };
+
+                flowPanel.Controls.Add(txtSpeed);
             }
 
             return flowPanel;
