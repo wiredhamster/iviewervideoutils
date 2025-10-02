@@ -21,9 +21,7 @@ namespace iviewer
 
         public Guid VideoGenerationStatePK => _videoGenerationStatePK;
 
-        private List<string> _rowImagePaths = new List<string>();
-        private List<string> _perPromptVideoPaths = new List<string>();
-        private List<string> _rowWorkflows = new List<string>();
+        // TODO: I feel this should be stored in the VideoRowInfo class
         private List<VideoClipInfo> _clipInfos = new List<VideoClipInfo>();
         private string _previewVideoPath = null;
         private List<string> _tempFiles = new List<string>();
@@ -46,8 +44,6 @@ namespace iviewer
         public const string TRANSITION_TYPE = "fade"; // Options: "fade", "dissolve", "wipe", "slide"
         private const double DEFAULT_TRANSITION_DURATION = 0.1; // Default duration in seconds
         private const double DEFAULT_CLIP_SPEED = 1.0;
-        private List<double> _transitionDurations = new List<double>();
-        private List<double> _clipSpeeds = new List<double>();
 
         private enum GenerationStatus
         {
@@ -105,7 +101,9 @@ namespace iviewer
                 Prompt = GetDefaultOrPreviousPrompt(),
                 ImagePath = "",
                 VideoPath = "",
-                WorkflowJson = ""
+                WorkflowJson = "",
+                TransitionDuration = DEFAULT_TRANSITION_DURATION,
+                ClipSpeed = DEFAULT_CLIP_SPEED
             };
 
             int insertIndex;
@@ -120,23 +118,9 @@ namespace iviewer
 
             // Insert new row in grid
             dgvPrompts.Rows.Insert(insertIndex);
-
-            // Insert empty entries in lists at the correct position
-            _rowImagePaths.Insert(insertIndex, "");
-            _perPromptVideoPaths.Insert(insertIndex, "");
-            _rowWorkflows.Insert(insertIndex, "");
+            dgvPrompts.Rows[insertIndex].Tag = rowData;
 
             PopulateGridRow(insertIndex, rowData);
-
-            if (_transitionDurations.Count >= insertIndex)
-            {
-                _transitionDurations.Insert(insertIndex, DEFAULT_TRANSITION_DURATION);
-            }
-
-            if (_clipSpeeds.Count >= insertIndex)
-            {
-                _clipSpeeds.Insert(insertIndex, DEFAULT_CLIP_SPEED);
-            }
 
             // Set initial status
             UpdateRowGenerationStatus(insertIndex);
@@ -169,12 +153,12 @@ namespace iviewer
             {
                 row.Cells["colImage"].Value = ImageHelper.CreateThumbnail(data.ImagePath, null, 160);
             }
-            else if (rowIndex > 0 && _perPromptVideoPaths[rowIndex - 1] != "")
+            else if (rowIndex > 0 && RowData(rowIndex - 1).VideoPath != "")
             {
-                string framePath = VideoUtils.ExtractLastFrame(_perPromptVideoPaths[rowIndex - 1], _fileService.TempDir);
+                string framePath = VideoUtils.ExtractLastFrame(RowData(rowIndex - 1).VideoPath, _fileService.TempDir);
                 if (!string.IsNullOrEmpty(framePath) && File.Exists(framePath))
                 {
-                    _rowImagePaths[rowIndex] = framePath;
+                    RowData(rowIndex).ImagePath = framePath;
                     _tempFiles.Add(framePath);
 
                     // Update thumbnail in grid with error handling
@@ -196,7 +180,7 @@ namespace iviewer
 
         private async void OnQueueSingleClick(int rowIndex)
         {
-            var rowData = GetRowData(rowIndex);
+            var rowData = RowData(rowIndex);
             if (!ValidateRowData(rowData))
             {
                 MessageBox.Show("Select an image and enter a prompt for this row.");
@@ -205,7 +189,7 @@ namespace iviewer
 
             UpdateRowStatus(rowIndex, "Queuing");
 
-            var allRowData = GetAllRowData();
+            var allRowData = VideoRows;
             if (_width == 0 || _height == 0)
             {
                 (_width, _height) = ResolutionCalculator.Calculate(allRowData.First().ImagePath);
@@ -227,7 +211,7 @@ namespace iviewer
 
             try
             {
-                var allRowData = GetAllRowData();
+                var allRowData = VideoRows;
                 if (_width == 0 || _height == 0)
                 {
                     (_width, _height) = ResolutionCalculator.Calculate(allRowData.First().ImagePath);
@@ -313,23 +297,10 @@ namespace iviewer
             }
         }
 
-        private VideoRowData GetRowData(int rowIndex)
-        {
-            var row = dgvPrompts.Rows[rowIndex];
-            return new VideoRowData
-            {
-                Prompt = row.Cells["colPrompt"].Value?.ToString() ?? "",
-                ImagePath = _rowImagePaths[rowIndex],
-                EndImagePath = GetEndImagePath(rowIndex),
-                VideoPath = _perPromptVideoPaths[rowIndex],
-                WorkflowJson = _rowWorkflows[rowIndex]
-            };
-        }
-
         private string GetEndImagePath(int rowIndex)
         {
-            return rowIndex + 1 < _rowImagePaths.Count && !string.IsNullOrEmpty(_rowImagePaths[rowIndex + 1])
-                ? _rowImagePaths[rowIndex + 1]
+            return rowIndex + 1 < dgvPrompts.Rows.Count && !string.IsNullOrEmpty(RowData(rowIndex + 1).ImagePath)
+                ? VideoRowData.GetRowData(dgvPrompts.Rows[rowIndex + 1]).ImagePath
                 : null;
         }
 
@@ -340,7 +311,7 @@ namespace iviewer
                 int rowIndex = dgvPrompts.SelectedRows[0].Index;
 
                 // Confirm deletion if video exists
-                string videoPath = _perPromptVideoPaths[rowIndex];
+                string videoPath = RowData(rowIndex).VideoPath;
                 if (!string.IsNullOrEmpty(videoPath) && File.Exists(videoPath))
                 {
                     var result = MessageBox.Show(
@@ -356,29 +327,15 @@ namespace iviewer
                 }
 
                 // Remove clip
-                var clip = _videoGenerationState?.ClipGenerationStates.FirstOrDefault(c => dgvPrompts.Rows[rowIndex].Tag != null && c.PK == Guid.Parse(dgvPrompts.Rows[rowIndex].Tag.ToString()));
+                var clip = _videoGenerationState?.ClipGenerationStates.FirstOrDefault(c => c.PK == RowData(rowIndex).ClipGenerationStatePK);
                 if (clip != null)
                 {
                     _videoGenerationState.ClipGenerationStates.Remove(clip);
                     clip.Delete();
                 }
 
-                // Remove from collections
+                // Remove row
                 dgvPrompts.Rows.RemoveAt(rowIndex);
-                _rowImagePaths.RemoveAt(rowIndex);
-                _perPromptVideoPaths.RemoveAt(rowIndex);
-                _rowWorkflows.RemoveAt(rowIndex);
-
-                // Remove transition duration (but keep at least one)
-                if (_transitionDurations.Count > rowIndex)
-                {
-                    _transitionDurations.RemoveAt(rowIndex);
-                }
-
-                if (_clipSpeeds.Count > rowIndex)
-                {
-                    _clipSpeeds.RemoveAt(rowIndex);
-                }
 
                 EventBus.RaiseItemQueued(Guid.Empty);
 
@@ -393,7 +350,7 @@ namespace iviewer
 
             int rowIndex = dgvPrompts.SelectedRows[0].Index;
             dgvPrompts.Rows[rowIndex].Cells["colImage"].Value = null;
-            _rowImagePaths[rowIndex] = String.Empty;
+            RowData(rowIndex).ImagePath = String.Empty;
         }
 
         private void ExtractLastFrameFromSelected()
@@ -401,7 +358,7 @@ namespace iviewer
             if (dgvPrompts.SelectedRows.Count == 0) return;
 
             int rowIndex = dgvPrompts.SelectedRows[0].Index;
-            string videoPath = _perPromptVideoPaths[rowIndex];
+            string videoPath = RowData(rowIndex).VideoPath;
 
             if (string.IsNullOrEmpty(videoPath) || !File.Exists(videoPath))
             {
@@ -415,9 +372,9 @@ namespace iviewer
                 if (!string.IsNullOrEmpty(framePath) && File.Exists(framePath))
                 {
                     // Determine target row (next row if exists, otherwise current)
-                    int targetRow = rowIndex + 1 < _rowImagePaths.Count ? rowIndex + 1 : rowIndex;
+                    int targetRow = rowIndex + 1 < dgvPrompts.Rows.Count ? rowIndex + 1 : rowIndex;
 
-                    _rowImagePaths[targetRow] = framePath;
+                    RowData(targetRow).ImagePath = framePath;
                     _tempFiles.Add(framePath);
 
                     // Update thumbnail in grid with error handling
@@ -469,16 +426,11 @@ namespace iviewer
         {
             _videoButtons.Clear();
 
-            EnsureTransitionDurationsPopulated();
-            EnsureClipSpeedsPopulated();
-
             var flowPanel = VideoPlayerHelper.CreateVideoButtonsPanel(
-                _perPromptVideoPaths,
+                VideoRows,
                 GenerateClipInfos(),
                 OnVideoButtonClick,
-                _transitionDurations,
                 OnTransitionDurationChanged,
-                _clipSpeeds,
                 OnClipSpeedChanged,
                 _videoButtons);
 
@@ -514,47 +466,17 @@ namespace iviewer
 
         private void OnTransitionDurationChanged(int clipIndex, double duration)
         {
-            if (clipIndex >= 0 && clipIndex < _transitionDurations.Count)
+            if (clipIndex >= 0)
             {
-                _transitionDurations[clipIndex] = duration;
+                RowData(clipIndex).TransitionDuration = duration;
             }
         }
 
         private void OnClipSpeedChanged(int clipIndex, double speed)
         {
-            if (clipIndex >= 0 && clipIndex < _clipSpeeds.Count)
+            if (clipIndex >= 0)
             {
-                _clipSpeeds[clipIndex] = speed;
-            }
-        }
-
-        private void EnsureTransitionDurationsPopulated()
-        {
-            // Ensure we have enough transition duration entries
-            while (_transitionDurations.Count < _perPromptVideoPaths.Count)
-            {
-                _transitionDurations.Add(DEFAULT_TRANSITION_DURATION);
-            }
-
-            // Remove excess entries if we have too many
-            while (_transitionDurations.Count > _perPromptVideoPaths.Count)
-            {
-                _transitionDurations.RemoveAt(_transitionDurations.Count - 1);
-            }
-        }
-
-        private void EnsureClipSpeedsPopulated()
-        {
-            // Ensure we have enough clip speed entries
-            while (_clipSpeeds.Count < _perPromptVideoPaths.Count)
-            {
-                _clipSpeeds.Add(DEFAULT_CLIP_SPEED);
-            }
-
-            // Remove excess entries if we have too many
-            while (_clipSpeeds.Count > _perPromptVideoPaths.Count)
-            {
-                _clipSpeeds.RemoveAt(_clipSpeeds.Count - 1);
+                RowData(clipIndex).ClipSpeed = speed;
             }
         }
 
@@ -641,14 +563,14 @@ namespace iviewer
                 string previewPath = Path.Combine(_fileService.TempDir, previewFilename);
 
                 // Create preview with transitions but without upscaling/interpolation
+                // TODO: Why not just pass the valid row datas.
                 bool success = await VideoUtils.StitchVideosWithTransitionsAsync(
-                    _perPromptVideoPaths,
+                    ValidVideoRows.Select(r => r.VideoPath).ToList<string>(),
                     previewPath,
                     TRANSITION_TYPE,
-                    _transitionDurations,
-                    _clipSpeeds, 
-                    true,
-                    false);
+                    ValidVideoRows.Select(r => r.TransitionDuration).ToList<double>(),
+                    ValidVideoRows.Select(r => r.ClipSpeed).ToList<double>(),
+                    true);
 
                 if (success)
                 {
@@ -761,7 +683,7 @@ namespace iviewer
                 Source = Guid.NewGuid(),
                 ClipInfos = clipInfos,
                 TransitionType = TRANSITION_TYPE,
-                TransitionDurations = _transitionDurations,
+                TransitionDurations = ValidVideoRows.Select(r => r.TransitionDuration),
                 ExportTimestamp = DateTime.Now
             };
 
@@ -785,12 +707,6 @@ namespace iviewer
                 // Add imported videos to the collections
                 for (int i = 0; i < imported.Count; i++)
                 {
-                    _perPromptVideoPaths.Add(imported[i]);
-                    _rowImagePaths.Add("");
-                    _rowWorkflows.Add("");
-                    _transitionDurations.Add(DEFAULT_TRANSITION_DURATION);
-                    _clipSpeeds.Add(DEFAULT_CLIP_SPEED);
-
                     // Add grid row
                     int rowIndex = dgvPrompts.Rows.Add();
                     dgvPrompts.Rows[rowIndex].Cells["colPrompt"].Value = "Imported Video";
@@ -805,10 +721,17 @@ namespace iviewer
                         Duration = VideoUtils.GetVideoDuration(imported[i]),
                         RowIndex = -1 // Flag as imported
                     });
+
+                    var rowData = new VideoRowData
+                    {
+                        VideoPath = imported[i],
+                        ClipSpeed = DEFAULT_CLIP_SPEED,
+                        TransitionDuration = DEFAULT_TRANSITION_DURATION
+                    };
                 }
 
                 UpdateUI();
-                MessageBox.Show($"{imported.Count} videos imported. Total videos: {_perPromptVideoPaths.Count(p => !string.IsNullOrEmpty(p))}");
+                MessageBox.Show($"{imported.Count} videos imported. Total videos: {VideoRows.Count()}");
             }
         }
 
@@ -818,10 +741,10 @@ namespace iviewer
 
             for (int i = 0; i < dgvPrompts.Rows.Count; i++)
             {
-                if (!string.IsNullOrEmpty(_perPromptVideoPaths[i]) && File.Exists(_perPromptVideoPaths[i]))
+                if (File.Exists(RowData(i).VideoPath))
                 {
                     var clipInfo = _metadataService.ExtractClipInfo(
-                        GetRowData(i),
+                        RowData(i),
                         lblResolution.Text,
                         i);
 
@@ -869,9 +792,9 @@ namespace iviewer
 
         private void UpdateResolutionLabel()
         {
-            if (_rowImagePaths.Count > 0 && !string.IsNullOrEmpty(_rowImagePaths[0]))
+            if (!string.IsNullOrEmpty(RowData(0).ImagePath))
             {
-                var (width, height) = ResolutionCalculator.Calculate(_rowImagePaths[0]);
+                var (width, height) = ResolutionCalculator.Calculate(RowData(0).ImagePath);
                 lblResolution.Text = $"{width}x{height}";
             }
             else
@@ -891,7 +814,7 @@ namespace iviewer
 
         private bool HasGeneratedVideos()
         {
-            return _perPromptVideoPaths.Any(p => !string.IsNullOrEmpty(p) && File.Exists(p));
+            return VideoRows.Any(p => !string.IsNullOrEmpty(p.VideoPath) && File.Exists(p.VideoPath));
         }
 
         // TODO: Update for Queued statuses
@@ -967,15 +890,15 @@ namespace iviewer
 
             foreach (DataGridViewRow row in dgvPrompts.Rows)
             {
-                if (row.Tag is Guid rowPK && rowPK == clipPK)
+                if (VideoRowData.GetRowData(row).ClipGenerationStatePK == clipPK)
                 {
                     // Update status (e.g., "Generated"), video path if new, etc.
                     row.Cells["colQueue"].Value = newStatus;
 
                     var clip = DB.SelectSingle($"SELECT * FROM ClipGenerationStates WHERE PK = {DB.FormatDBValue(clipPK)}");
-                    _perPromptVideoPaths[row.Index] = clip["VideoPath"].ToString();
-                    _rowImagePaths[row.Index] = clip["ImagePath"].ToString();
-                    var thumbnail = ImageHelper.CreateThumbnail(_rowImagePaths[row.Index], null, 160);
+                    RowData(row).VideoPath = clip["VideoPath"].ToString();
+                    RowData(row).ImagePath = clip["ImagePath"].ToString();
+                    var thumbnail = ImageHelper.CreateThumbnail(RowData(row).ImagePath, null, 160);
                     dgvPrompts.Rows[row.Index].Cells["colImage"].Value = thumbnail;
 
                     break;
@@ -1040,7 +963,7 @@ namespace iviewer
                 // Check if this row was previously generated
                 bool wasGenerated = dgvPrompts.Rows[rowIndex].Cells["colQueue"].Value?.ToString() == "Generated";
 
-                _rowImagePaths[rowIndex] = ofd.FileName;
+                RowData(rowIndex).ImagePath = ofd.FileName;
                 dgvPrompts.Rows[rowIndex].Cells["colImage"].Value = ImageHelper.CreateThumbnail(ofd.FileName, null, 160);
 
                 // If it was previously generated, mark for regeneration
@@ -1148,13 +1071,6 @@ namespace iviewer
             dgvPrompts.Refresh();
         }
 
-        private List<VideoRowData> GetAllRowData()
-        {
-            return Enumerable.Range(0, dgvPrompts.Rows.Count)
-                           .Select(GetRowData)
-                           .ToList();
-        }
-
         private void RefreshPreviewIfOpen()
         {
             // Update preview tabs if they're currently visible
@@ -1183,13 +1099,11 @@ namespace iviewer
                 string currentStatus = row.Cells["colQueue"].Value?.ToString() ?? "Queue";
 
                 // Check if video exists for this row
-                bool hasVideo = rowIndex < _perPromptVideoPaths.Count &&
-                               !string.IsNullOrEmpty(_perPromptVideoPaths[rowIndex]) &&
-                               File.Exists(_perPromptVideoPaths[rowIndex]);
+                bool hasVideo = File.Exists(RowData(rowIndex).VideoPath);
 
                 // Check if row data is valid for generation
-                bool hasValidData = rowIndex < _rowImagePaths.Count &&
-                                   !string.IsNullOrEmpty(_rowImagePaths[rowIndex]) &&
+                bool hasValidData = rowIndex < dgvPrompts.Rows.Count &&
+                                   !string.IsNullOrEmpty(RowData(rowIndex).ImagePath) &&
                                    !string.IsNullOrWhiteSpace(row.Cells["colPrompt"].Value?.ToString());
 
                 // Determine appropriate status
@@ -1263,10 +1177,7 @@ namespace iviewer
             // This is a simple implementation - you might want to store generation timestamps
             // or checksums for more accurate tracking
 
-            if (rowIndex >= _perPromptVideoPaths.Count || string.IsNullOrEmpty(_perPromptVideoPaths[rowIndex]))
-                return false;
-
-            string videoPath = _perPromptVideoPaths[rowIndex];
+            string videoPath = RowData(rowIndex).VideoPath;
             if (!File.Exists(videoPath))
                 return true; // Video was deleted, so it's effectively modified
 
@@ -1296,7 +1207,7 @@ namespace iviewer
                 return;
             }
 
-            _playAllVideos = _perPromptVideoPaths.Where(p => !string.IsNullOrEmpty(p) && File.Exists(p)).ToList();
+            _playAllVideos = ValidVideoRows.Select(r => r.VideoPath).ToList<string>();
 
             if (_playAllVideos.Count == 0)
             {
@@ -1346,10 +1257,10 @@ namespace iviewer
                 HighlightCurrentVideoButton(_currentPlayAllIndex);
 
                 // Load and play the video
-                LoadVideoInPlayer(videoPlayerPerPrompt, videoPath, ref _perPromptStream, _clipSpeeds[_currentPlayAllIndex]);
+                LoadVideoInPlayer(videoPlayerPerPrompt, videoPath, ref _perPromptStream, RowData(_currentPlayAllIndex).ClipSpeed);
 
                 // Get video duration and wait for it to complete
-                double videoDuration = VideoUtils.GetVideoDuration(videoPath) / _clipSpeeds[_currentPlayAllIndex];
+                double videoDuration = VideoUtils.GetVideoDuration(videoPath) / RowData(_currentPlayAllIndex).ClipSpeed;
 
                 // Wait for video to complete (with small buffer)
                 await Task.Delay(TimeSpan.FromSeconds(videoDuration + 0.2));
@@ -1444,7 +1355,14 @@ namespace iviewer
                 _videoGenerationStatePK = _videoGenerationState.PK;
             }
 
-            _videoGenerationState.ImagePath = _rowImagePaths.FirstOrDefault() ?? string.Empty; // First clip's image for display
+            foreach (DataGridViewRow row in dgvPrompts.Rows)
+            {
+                if (RowData(row).ImagePath != "")
+                {
+                    _videoGenerationState.ImagePath = RowData(row).ImagePath ?? string.Empty; // First clip's image for display
+                    break;
+                }
+            }
 
             if (_videoGenerationState.Width == 0 && _videoGenerationState.Height == 0)
             {
@@ -1457,19 +1375,18 @@ namespace iviewer
 
             for (int i = 0; i < dgvPrompts.Rows.Count; i++)
             {
-                var clipState = _videoGenerationState.ClipGenerationStates.FirstOrDefault(c => dgvPrompts.Rows[i].Tag != null && c.PK == Guid.Parse(dgvPrompts.Rows[i].Tag.ToString()));
+                var clipState = _videoGenerationState.ClipGenerationStates.FirstOrDefault(c => c.PK == VideoRowData.GetRowData(dgvPrompts.Rows[i]).ClipGenerationStatePK);
                 if (clipState == null)
                 {
                     clipState = ClipGenerationState.New();
-                    dgvPrompts.Rows[i].Tag = clipState.PK;
+                    //dgvPrompts.Rows[i].Tag = clipState.PK;
                     _videoGenerationState.ClipGenerationStates.Add(clipState);
                 }
 
                 clipState.VideoGenerationStatePK = _videoGenerationStatePK;
-                clipState.ImagePath = _rowImagePaths.ElementAtOrDefault(i) ?? string.Empty;
-                clipState.VideoPath = _perPromptVideoPaths.ElementAtOrDefault(i) ?? string.Empty;
+                clipState.ImagePath = RowData(i).ImagePath ?? string.Empty;
+                clipState.VideoPath = RowData(i).VideoPath ?? string.Empty;
                 clipState.Prompt = dgvPrompts.Rows[i].Cells["colPrompt"].Value?.ToString() ?? string.Empty;
-                clipState.WorkflowPath = _rowWorkflows.ElementAtOrDefault(i) ?? string.Empty;
                 clipState.Status = dgvPrompts.Rows[i].Cells["colQueue"].Value?.ToString() ?? string.Empty;
                 clipState.OrderIndex = i;
             }
@@ -1490,27 +1407,31 @@ namespace iviewer
 
                 // Clear grid/lists
                 dgvPrompts.Rows.Clear();
-                _rowImagePaths.Clear();
-                _perPromptVideoPaths.Clear();
-                _rowWorkflows.Clear();
 
                 foreach (var clipState in state.ClipGenerationStates)
                 {
                     int rowIndex = dgvPrompts.Rows.Add();
+                    
+                    string imgPath = clipState.ImagePath;
+                    string vidPath = clipState.VideoPath;
 
-                    dgvPrompts.Rows[rowIndex].Tag = clipState.PK;
+                    var rowData = new VideoRowData
+                    {
+                        ClipGenerationStatePK = clipState.PK,
+                        Prompt = clipState.Prompt,
+                        Status = clipState.Status,
+                        WorkflowJson = clipState.WorkflowJson,
+                        ImagePath = imgPath,
+                        VideoPath = vidPath,
+                        TransitionDuration = DEFAULT_TRANSITION_DURATION,
+                        ClipSpeed = DEFAULT_CLIP_SPEED
+                    };
+
+                    dgvPrompts.Rows[rowIndex].Tag = rowData;
+                    dgvPrompts.Rows[rowIndex].Cells["colImage"].Value = ImageHelper.CreateThumbnail(imgPath, null, 160);
                     dgvPrompts.Rows[rowIndex].Cells["colPrompt"].Value = clipState.Prompt;
                     dgvPrompts.Rows[rowIndex].Cells["colLora"].Value = "Select LoRA";
                     dgvPrompts.Rows[rowIndex].Cells["colQueue"].Value = clipState.Status;
-
-                    string imgPath = clipState.ImagePath;
-                    _rowImagePaths.Add(File.Exists(imgPath) ? imgPath : string.Empty);
-                    dgvPrompts.Rows[rowIndex].Cells["colImage"].Value = ImageHelper.CreateThumbnail(imgPath, null, 160);
-
-                    string vidPath = clipState.VideoPath;
-                    _perPromptVideoPaths.Add(File.Exists(vidPath) ? vidPath : string.Empty);
-
-                    _rowWorkflows.Add(clipState.WorkflowJson);
                 }
             }
         }
@@ -1546,28 +1467,27 @@ namespace iviewer
                 {
                     _fileService.CleanupTempFiles(_tempFiles);
 
-                    foreach (var filePath in _rowImagePaths)
+                    foreach (DataGridViewRow row in dgvPrompts.Rows)
                     {
-                        if (File.Exists(filePath))
+                        var data = RowData(row);
+                        if (File.Exists(data.ImagePath))
                         {
                             try
                             {
-                                File.Delete(filePath);
+                                File.Delete(data.ImagePath);
                             }
                             catch { }
                         }
-                    }
 
-                    foreach (var filePath in _perPromptVideoPaths)
-                    {
-                        if (File.Exists(filePath))
+                        if (File.Exists(data.VideoPath))
                         {
                             try
                             {
-                                File.Delete(filePath);
+                                File.Delete(data.VideoPath);
                             }
                             catch { }
                         }
+
                     }
 
                     if (_videoGenerationState != null)
@@ -1589,17 +1509,72 @@ namespace iviewer
         }
 
         #endregion
+
+        #region RowData
+
+        VideoRowData RowData(int rowIndex)
+        {
+            return dgvPrompts.Rows[rowIndex].Tag as VideoRowData;
+        }
+
+        VideoRowData RowData(DataGridViewRow row)
+        {
+            return row.Tag as VideoRowData;
+        }
+
+        IEnumerable<VideoRowData> ValidVideoRows
+        {
+            get
+            {
+                foreach (DataGridViewRow row in dgvPrompts.Rows)
+                {
+                    if (File.Exists(RowData(row).VideoPath))
+                    {
+                        yield return RowData(row);
+                    } 
+                }
+            }
+        }
+
+        List<VideoRowData> VideoRows
+        {
+            get
+            {
+                var result = new List<VideoRowData>();
+                foreach (DataGridViewRow row in dgvPrompts.Rows)
+                {
+                    result.Add(RowData(row));
+                }
+
+                return result;
+            }
+        }
+
+
+        #endregion
     }
 
     #region Data Classes
 
     public class VideoRowData
     {
+        public Guid ClipGenerationStatePK { get; set; } = Guid.NewGuid();
         public string Prompt { get; set; } = "";
         public string ImagePath { get; set; } = "";
         public string EndImagePath { get; set; } = "";
         public string VideoPath { get; set; } = "";
         public string WorkflowJson { get; set; } = "";
+        public double TransitionDuration { get; set; }
+        public double ClipSpeed { get; set; }
+        public string Status { get; set; } = "Queue";  // e.g., "Queue", "Generating", "Generated"
+
+        // Optional: Link to metadata (populate post-generation)
+        //public VideoClipInfo Metadata { get; set; } = new VideoClipInfo();
+
+        public static VideoRowData GetRowData(DataGridViewRow row)
+        {
+            return row.Tag as VideoRowData;
+        }
     }
 
     public class VideoExportData

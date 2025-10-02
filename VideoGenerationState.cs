@@ -126,6 +126,7 @@ namespace iviewer
 
         #region Clips
 
+        // TODO: remove this list. Store ClipGenerationState in VideoRowData.
         public List<ClipGenerationState> ClipGenerationStates
         {
             get

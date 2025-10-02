@@ -749,12 +749,10 @@ namespace iviewer.Helpers
     public static class VideoPlayerHelper
     {
         public static FlowLayoutPanel CreateVideoButtonsPanel(
-            List<string> videoPaths,
+            List<VideoRowData> videoRows,
             List<VideoClipInfo> clipInfos,
             Action<int, string, double> onVideoClick,
-            List<double> transitionDurations,
             Action<int, double> onTransitionDurationChanged,
-            List<double> clipSpeeds,
             Action<int, double> onClipSpeedChanged,
             List<Button> buttonTracker = null)
         {
@@ -766,14 +764,14 @@ namespace iviewer.Helpers
                 FlowDirection = FlowDirection.LeftToRight
             };
 
-            for (int i = 0; i < videoPaths.Count; i++)
+            for (int i = 0; i < videoRows.Count; i++)
             {
                 var info = clipInfos.Count > i ? clipInfos[i] : new VideoClipInfo();
                 int currentIndex = i; // Capture for closure
 
                 var btnPlay = new Button
                 {
-                    Text = $"Clip {i + 1}: {Path.GetFileNameWithoutExtension(videoPaths[i])}",
+                    Text = $"Clip {i + 1}: {Path.GetFileNameWithoutExtension(videoRows[i].VideoPath)}",
                     Width = 200,
                     Height = 50,
                     Margin = new Padding(5),
@@ -781,26 +779,21 @@ namespace iviewer.Helpers
                     Enabled = false
                 };
 
-                if (videoPaths[i] != null && File.Exists(videoPaths[i]))
-                {
-                    btnPlay.Click += (s, e) => onVideoClick(currentIndex, videoPaths[currentIndex], clipSpeeds[currentIndex]);
-                    btnPlay.Enabled = true;
-                }
-
                 flowPanel.Controls.Add(btnPlay);
 
                 // Add to tracker if provided
                 buttonTracker?.Add(btnPlay);
 
-                // Add transition duration control (except for the last clip)
-                if (i < videoPaths.Count - 1)
+                var txtDuration = new TextBox
                 {
-                    var txtDuration = new TextBox
-                    {
-                        Size = new Size(40, 20),
-                        Text = transitionDurations[i].ToString()
-                    };
+                    Size = new Size(40, 20),
+                    Text = videoRows[i].TransitionDuration.ToString(),
+                    Enabled = false
+                };
 
+                // Add transition duration control (except for the last clip)
+                if (i < videoRows.Count - 1)
+                {
                     txtDuration.TextChanged += (s, e) => {
                         if (double.TryParse(txtDuration.Text, out double newDuration) && newDuration >= 0 && newDuration <= 5)
                         {
@@ -820,8 +813,9 @@ namespace iviewer.Helpers
                 var txtSpeed = new TextBox
                 {
                     Size = new Size(40, 20),
-                    Text = clipSpeeds[i].ToString(),
-                    BackColor = Color.LightCyan
+                    Text = videoRows[i].ClipSpeed.ToString(),
+                    BackColor = Color.LightCyan,
+                    Enabled = false
                 };
 
                 txtSpeed.TextChanged += (s, e) => {
@@ -837,6 +831,15 @@ namespace iviewer.Helpers
                 };
 
                 flowPanel.Controls.Add(txtSpeed);
+
+
+                if (File.Exists(videoRows[i].VideoPath))
+                {
+                    btnPlay.Click += (s, e) => onVideoClick(currentIndex, videoRows[currentIndex].VideoPath, videoRows[currentIndex].ClipSpeed);
+                    btnPlay.Enabled = true;
+                    txtDuration.Enabled = true;
+                    txtSpeed.Enabled = true;
+                }
             }
 
             return flowPanel;
