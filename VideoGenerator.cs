@@ -2,6 +2,7 @@
 using iviewer.Services;
 using iviewer.Video;
 using System.Data;
+using System.Diagnostics;
 
 namespace iviewer
 {
@@ -24,6 +25,7 @@ namespace iviewer
         // TODO: I feel this should be stored in the VideoRowInfo class
         private List<VideoClipInfo> _clipInfos = new List<VideoClipInfo>();
         private string _previewVideoPath = null;
+        bool _highQualityPreview = false;
         private List<string> _tempFiles = new List<string>();
 
         private int _width = 0;
@@ -56,9 +58,12 @@ namespace iviewer
         private GenerationStatus _generationStatus = GenerationStatus.Idle;
         private bool _updatingRowStatus = false;
 
-        public VideoGenerator()
+        public VideoGenerator(Guid? videoGenerationStatePK = null)
         {
             InitializeComponent();
+
+            var pk = videoGenerationStatePK.HasValue && videoGenerationStatePK.Value != Guid.Empty ? videoGenerationStatePK.Value : Guid.NewGuid();
+            _videoGenerationStatePK = pk;
 
             _config = new VideoGenerationConfig();
             _generationService = new VideoGenerationService(_config);
@@ -155,7 +160,7 @@ namespace iviewer
             }
             else if (rowIndex > 0 && RowData(rowIndex - 1).VideoPath != "")
             {
-                string framePath = VideoUtils.ExtractLastFrame(RowData(rowIndex - 1).VideoPath, _fileService.TempDir);
+                string framePath = VideoUtils.ExtractLastFrame(RowData(rowIndex - 1).VideoPath, _fileService.TempDir, true);
                 if (!string.IsNullOrEmpty(framePath) && File.Exists(framePath))
                 {
                     RowData(rowIndex).ImagePath = framePath;
@@ -180,6 +185,8 @@ namespace iviewer
 
         private async void OnQueueSingleClick(int rowIndex)
         {
+            UpdateState();
+
             var rowData = RowData(rowIndex);
             if (!ValidateRowData(rowData))
             {
@@ -199,7 +206,7 @@ namespace iviewer
 
             _generationService.QueueClips(_videoGenerationState);
 
-            LoadState(_videoGenerationStatePK);
+            LoadState(false);
             UpdateUI();
 
             QueryStartQueue();
@@ -220,7 +227,7 @@ namespace iviewer
                 for (var rowIndex = 0; rowIndex < dgvPrompts.RowCount; rowIndex++)
                 {
                     var row = dgvPrompts.Rows[rowIndex];
-                    if ((row.Cells["colQueue"].Value.Equals("Queue") || row.Cells["colQueue"].Value.Equals("Requeue")) && row.Cells["colPrompt"].Value != null)
+                    if (row.Cells["colQueue"].Value.Equals("Queue") && row.Cells["colPrompt"].Value != null)
                     {
                         UpdateRowStatus(rowIndex, "Queuing");
                     }
@@ -230,7 +237,7 @@ namespace iviewer
 
                 _generationService.QueueClips(_videoGenerationState);
 
-                LoadState(_videoGenerationStatePK);
+                LoadState(false);
                 UpdateUI();
             }
             catch (Exception ex)
@@ -368,7 +375,7 @@ namespace iviewer
 
             try
             {
-                string framePath = VideoUtils.ExtractLastFrame(videoPath, _fileService.TempDir);
+                string framePath = VideoUtils.ExtractLastFrame(videoPath, _fileService.TempDir, true);
                 if (!string.IsNullOrEmpty(framePath) && File.Exists(framePath))
                 {
                     // Determine target row (next row if exists, otherwise current)
@@ -559,32 +566,11 @@ namespace iviewer
 
             try
             {
-                string previewFilename = $"preview_{DateTime.Now:yyyyMMdd_HHmmss}.mp4";
-                string previewPath = Path.Combine(_fileService.TempDir, previewFilename);
+                await CreatePreview(false);
 
-                // Create preview with transitions but without upscaling/interpolation
-                // TODO: Why not just pass the valid row datas.
-                bool success = await VideoUtils.StitchVideosWithTransitionsAsync(
-                    ValidVideoRows.Select(r => r.VideoPath).ToList<string>(),
-                    previewPath,
-                    TRANSITION_TYPE,
-                    ValidVideoRows.Select(r => r.TransitionDuration).ToList<double>(),
-                    ValidVideoRows.Select(r => r.ClipSpeed).ToList<double>(),
-                    true);
-
-                if (success)
-                {
-                    _previewVideoPath = previewPath;
-                    _tempFiles.Add(previewPath); // Track for cleanup
-
-                    // Switch to Full Video tab and load the preview
-                    tabControl.SelectedIndex = 2; // Full Video tab
-                    LoadVideoInPlayer(videoPlayerFull, previewPath, ref _fullStream);
-                }
-                else
-                {
-                    MessageBox.Show("Failed to create preview video.");
-                }
+                // Switch to Full Video tab and load the preview
+                tabControl.SelectedIndex = 2; // Full Video tab
+                LoadVideoInPlayer(videoPlayerFull, _previewVideoPath, ref _fullStream);
             }
             catch (Exception ex)
             {
@@ -594,6 +580,34 @@ namespace iviewer
             {
                 SetPreviewButtonState(false, "Preview");
                 SetExportButtonState(false, "Export");
+            }
+        }
+
+        private async Task CreatePreview(bool highQuality = true)
+        {
+            string previewFilename = $"preview_{DateTime.Now:yyyyMMdd_HHmmss}.mp4";
+            string previewPath = Path.Combine(_fileService.TempDir, previewFilename);
+
+            // Create preview with transitions but without upscaling/interpolation
+            // TODO: Why not just pass the valid row datas.
+            bool success = await VideoUtils.StitchVideosWithTransitionsAsync(
+                ValidVideoRows.Select(r => r.VideoPath).ToList<string>(),
+                previewPath,
+                TRANSITION_TYPE,
+                ValidVideoRows.Select(r => r.TransitionDuration).ToList<double>(),
+                ValidVideoRows.Select(r => r.ClipSpeed).ToList<double>(),
+                true,
+                highQuality);
+
+            if (success)
+            {
+                _previewVideoPath = previewPath;
+                _highQualityPreview = highQuality;
+                _tempFiles.Add(previewPath); // Track for cleanup
+            }
+            else
+            {
+                MessageBox.Show("Failed to create preview video.");
             }
         }
 
@@ -621,6 +635,11 @@ namespace iviewer
             _videoGenerationState.Save();
 
             EventBus.RaiseItemQueued(Guid.Empty);
+
+            if (!_highQualityPreview)
+            {
+                await CreatePreview(true);
+            }
 
             try
             {
@@ -1039,7 +1058,28 @@ namespace iviewer
 
         private bool ValidateRowData(VideoRowData data)
         {
-            return !string.IsNullOrEmpty(data.ImagePath) && !string.IsNullOrEmpty(data.Prompt);
+            var isValid = !string.IsNullOrEmpty(data.ImagePath) && !string.IsNullOrEmpty(data.Prompt);
+            if (!isValid)
+            {
+                DataGridViewRow row;
+                for (var i = dgvPrompts.Rows.Count; i >= 0; i--)
+                {
+                    row = dgvPrompts.Rows[i];
+
+                    var found = false;
+                    if (found)
+                    {
+                        // Row is valid if the row above it is in the queue
+                        return RowData(i).Status == "Queued" || RowData(i).Status == "Generating";
+                    }
+                    else if (RowData(i).ClipGenerationStatePK == RowData(row).ClipGenerationStatePK)
+                    {
+                        found = true;
+                    }
+                }
+            }
+
+            return isValid;
         }
 
         private bool ValidateGenerateAll()
@@ -1350,9 +1390,18 @@ namespace iviewer
         {
             if (_videoGenerationState == null)
             {
-                _videoGenerationState = VideoGenerationState.New();
-                _videoGenerationState.Status = "Queue";
-                _videoGenerationStatePK = _videoGenerationState.PK;
+                if (_videoGenerationState == null || _videoGenerationState.PK != _videoGenerationStatePK)
+                {
+                    _videoGenerationState = VideoGenerationState.Load(_videoGenerationStatePK);
+                    LoadState();
+                }
+
+                if (_videoGenerationState == null)
+                {
+                    _videoGenerationState = VideoGenerationState.New();
+                    _videoGenerationState.Status = "Queue";
+                    _videoGenerationStatePK = _videoGenerationState.PK;
+                }
             }
 
             foreach (DataGridViewRow row in dgvPrompts.Rows)
@@ -1375,47 +1424,63 @@ namespace iviewer
 
             for (int i = 0; i < dgvPrompts.Rows.Count; i++)
             {
-                var clipState = _videoGenerationState.ClipGenerationStates.FirstOrDefault(c => c.PK == VideoRowData.GetRowData(dgvPrompts.Rows[i]).ClipGenerationStatePK);
+                var rowData = RowData(i);
+
+                var clipState = _videoGenerationState.ClipGenerationStates.FirstOrDefault(c => c.PK == rowData.ClipGenerationStatePK);
                 if (clipState == null)
                 {
                     clipState = ClipGenerationState.New();
-                    //dgvPrompts.Rows[i].Tag = clipState.PK;
+                    if (rowData.ClipGenerationStatePK == Guid.Empty)
+                    {
+                        rowData.ClipGenerationStatePK = clipState.PK;
+                    }
+
                     _videoGenerationState.ClipGenerationStates.Add(clipState);
                 }
 
                 clipState.VideoGenerationStatePK = _videoGenerationStatePK;
-                clipState.ImagePath = RowData(i).ImagePath ?? string.Empty;
-                clipState.VideoPath = RowData(i).VideoPath ?? string.Empty;
+                clipState.ImagePath = rowData.ImagePath ?? string.Empty;
+                clipState.VideoPath = rowData.VideoPath ?? string.Empty;
                 clipState.Prompt = dgvPrompts.Rows[i].Cells["colPrompt"].Value?.ToString() ?? string.Empty;
                 clipState.Status = dgvPrompts.Rows[i].Cells["colQueue"].Value?.ToString() ?? string.Empty;
                 clipState.OrderIndex = i;
+
+                rowData.Prompt = clipState.Prompt;
+                // RowData(i).ImagePath = clipState.ImagePath;
             }
         }
 
-        public void LoadState(Guid pk)
-        {
-            var state = VideoGenerationState.Load(pk);
-            _videoGenerationStatePK = pk;
-
-            if (state != null)
+        public void LoadState(bool reloadRows = true)
+        {   
+            if (_videoGenerationState == null)
             {
-                _videoGenerationState = state;
-                _width = state.Width;
-                _height = state.Height;
-                _previewVideoPath = state.PreviewPath;
-                _tempFiles = state.TempFiles.Split(',').ToList();
+                // ??
+            }
 
-                // Clear grid/lists
+            _width = _videoGenerationState.Width;
+            _height = _videoGenerationState.Height;
+            _previewVideoPath = _videoGenerationState.PreviewPath;
+            _tempFiles = _videoGenerationState.TempFiles.Split(',').ToList();
+
+            // Clear grid/lists
+            if (reloadRows)
+            {
                 dgvPrompts.Rows.Clear();
+            }
 
-                foreach (var clipState in state.ClipGenerationStates)
+            for (var rowIndex = 0; rowIndex < _videoGenerationState.ClipGenerationStates.Count; rowIndex++)
+            {
+                var clipState = _videoGenerationState.ClipGenerationStates[rowIndex];
+                VideoRowData rowData;
+
+                string imgPath = clipState.ImagePath;
+                string vidPath = clipState.VideoPath;
+
+                if (reloadRows)
                 {
-                    int rowIndex = dgvPrompts.Rows.Add();
-                    
-                    string imgPath = clipState.ImagePath;
-                    string vidPath = clipState.VideoPath;
+                    dgvPrompts.Rows.Add();
 
-                    var rowData = new VideoRowData
+                    rowData = new VideoRowData
                     {
                         ClipGenerationStatePK = clipState.PK,
                         Prompt = clipState.Prompt,
@@ -1428,11 +1493,12 @@ namespace iviewer
                     };
 
                     dgvPrompts.Rows[rowIndex].Tag = rowData;
-                    dgvPrompts.Rows[rowIndex].Cells["colImage"].Value = ImageHelper.CreateThumbnail(imgPath, null, 160);
-                    dgvPrompts.Rows[rowIndex].Cells["colPrompt"].Value = clipState.Prompt;
-                    dgvPrompts.Rows[rowIndex].Cells["colLora"].Value = "Select LoRA";
-                    dgvPrompts.Rows[rowIndex].Cells["colQueue"].Value = clipState.Status;
                 }
+
+                dgvPrompts.Rows[rowIndex].Cells["colImage"].Value = ImageHelper.CreateThumbnail(imgPath, null, 160);
+                dgvPrompts.Rows[rowIndex].Cells["colPrompt"].Value = clipState.Prompt;
+                dgvPrompts.Rows[rowIndex].Cells["colLora"].Value = "Select LoRA";
+                dgvPrompts.Rows[rowIndex].Cells["colQueue"].Value = clipState.Status;                
             }
         }
 
@@ -1514,6 +1580,8 @@ namespace iviewer
 
         VideoRowData RowData(int rowIndex)
         {
+            if (dgvPrompts.Rows.Count == 0) return null;
+
             return dgvPrompts.Rows[rowIndex].Tag as VideoRowData;
         }
 
@@ -1558,7 +1626,7 @@ namespace iviewer
 
     public class VideoRowData
     {
-        public Guid ClipGenerationStatePK { get; set; } = Guid.NewGuid();
+        public Guid ClipGenerationStatePK { get; set; } = Guid.Empty;
         public string Prompt { get; set; } = "";
         public string ImagePath { get; set; } = "";
         public string EndImagePath { get; set; } = "";

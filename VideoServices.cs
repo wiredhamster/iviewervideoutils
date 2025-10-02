@@ -59,23 +59,6 @@ namespace iviewer.Services
             EventBus.RaiseItemQueued(Guid.Empty);
         }
 
-        public async Task<string> GenerateVideoAsync(VideoRowData rowData, int rowIndex, int width, int height)
-        {
-            string selectedWorkflow = string.IsNullOrEmpty(rowData.EndImagePath)
-                ? _config.WorkflowPath
-                : _config.WorkflowPathLast;
-
-            string workflowJson = await PrepareWorkflowAsync(selectedWorkflow, rowData, width, height);
-            string videoPath = await ExecuteWorkflowAsync(workflowJson); //, rowData, rowIndex);
-
-            if (!string.IsNullOrEmpty(videoPath))
-            {
-                rowData.WorkflowJson = workflowJson; // Store for metadata extraction
-            }
-
-            return videoPath;
-        }
-
         public async Task<string> GenerateVideoAsync(ClipGenerationState clip)
         {
             var video = VideoGenerationState.Load(clip.VideoGenerationStatePK);
@@ -125,93 +108,6 @@ namespace iviewer.Services
             return videoPath;
         }
 
-        public async Task GenerateAllVideosAsync(
-            List<VideoRowData> allRowData,
-            List<string> rowImagePaths,
-            List<string> perPromptVideoPaths,
-            List<string> rowWorkflows,
-            Action<int, string> onRowStatusUpdate,
-            Action<int> onProgressUpdate,
-            int width,
-            int height,
-            Action<int, string> onRowImageUpdate = null)
-        {
-            string prevVideoPath = null;
-
-            for (int i = 0; i < allRowData.Count; i++)
-            {
-                var rowData = allRowData[i];
-
-                // Chain videos: extract last frame if no start image
-                if (string.IsNullOrEmpty(rowData.ImagePath) && !string.IsNullOrEmpty(prevVideoPath))
-                {
-                    string extractedFrame = VideoUtils.ExtractLastFrame(prevVideoPath, _config.TempDir);
-                    if (!string.IsNullOrEmpty(extractedFrame))
-                    {
-                        rowData.ImagePath = extractedFrame;
-                        rowImagePaths[i] = extractedFrame;
-
-                        onRowImageUpdate?.Invoke(i, extractedFrame);
-                    }
-                }
-
-                if (!string.IsNullOrEmpty(rowData.ImagePath) && !string.IsNullOrEmpty(rowData.Prompt))
-                {
-                    onRowStatusUpdate(i, "Generating...");
-
-                    try
-                    {
-                        string videoPath = await GenerateVideoAsync(rowData, i, width, height);
-                        if (!string.IsNullOrEmpty(videoPath))
-                        {
-                            perPromptVideoPaths[i] = videoPath;
-                            rowWorkflows[i] = rowData.WorkflowJson;
-                            prevVideoPath = videoPath;
-                            onRowStatusUpdate(i, "Generated");
-                        }
-                        else
-                        {
-                            onRowStatusUpdate(i, "Generate");
-                        }
-                    }
-                    catch (Exception ex)
-                    {
-                        Console.WriteLine($"Error generating video for row {i}: {ex.Message}");
-                        onRowStatusUpdate(i, "Generate");
-                    }
-                }
-
-                int progress = (int)((i + 1) / (double)allRowData.Count * 100);
-                onProgressUpdate(progress);
-            }
-        }
-
-        private async Task<string> PrepareWorkflowAsync(string workflowPath, VideoRowData rowData, int width, int height)
-        {
-            string workflowJson = await File.ReadAllTextAsync(workflowPath);
-
-            if (width == 0 || height == 0)
-            {
-                (width, height) = ResolutionCalculator.Calculate(rowData.ImagePath);
-            }
-
-            // Upload images and get server filenames
-            string startFilename = await UploadImageAsync(rowData.ImagePath);
-            workflowJson = workflowJson.Replace("{START_IMAGE}", startFilename);
-
-            if (!string.IsNullOrEmpty(rowData.EndImagePath))
-            {
-                string endFilename = await UploadImageAsync(rowData.EndImagePath);
-                workflowJson = workflowJson.Replace("{END_IMAGE}", endFilename);
-            }
-
-            // Replace placeholders
-            return workflowJson
-                .Replace("{PROMPT}", rowData.Prompt)
-                .Replace("{WIDTH}", width.ToString())
-                .Replace("{HEIGHT}", height.ToString());
-        }
-
         private async Task<string> PrepareWorkflowAsync(string workflowPath, string prompt, string imagePath, string endImagePath, int width, int height)
         {
             string workflowJson = await File.ReadAllTextAsync(workflowPath);
@@ -241,25 +137,32 @@ namespace iviewer.Services
 
         private async Task<string> UploadImageAsync(string imagePath)
         {
-            string filename = Path.GetFileName(imagePath);
-            string contentType = Path.GetExtension(imagePath).ToLower() == ".png" ? "image/png" : "image/jpeg";
-
-            using var fileStream = File.OpenRead(imagePath);
-            using var multipartContent = new MultipartFormDataContent();
-            var fileContent = new StreamContent(fileStream);
-            fileContent.Headers.ContentType = new System.Net.Http.Headers.MediaTypeHeaderValue(contentType);
-            multipartContent.Add(fileContent, "image", filename);
-
-            var response = await _httpClient.PostAsync("/upload/image", multipartContent);
-            string responseBody = await response.Content.ReadAsStringAsync();
-
-            if (!response.IsSuccessStatusCode)
+            try
             {
-                throw new Exception($"Upload failed for {filename}: {responseBody}");
-            }
+                string filename = Path.GetFileName(imagePath);
+                string contentType = Path.GetExtension(imagePath).ToLower() == ".png" ? "image/png" : "image/jpeg";
 
-            var result = JObject.Parse(responseBody);
-            return result["name"]?.ToString() ?? filename;
+                using var fileStream = File.OpenRead(imagePath);
+                using var multipartContent = new MultipartFormDataContent();
+                var fileContent = new StreamContent(fileStream);
+                fileContent.Headers.ContentType = new System.Net.Http.Headers.MediaTypeHeaderValue(contentType);
+                multipartContent.Add(fileContent, "image", filename);
+
+                var response = await _httpClient.PostAsync("/upload/image", multipartContent);
+                string responseBody = await response.Content.ReadAsStringAsync();
+
+                if (!response.IsSuccessStatusCode)
+                {
+                    throw new Exception($"Upload failed for {filename}: {responseBody}");
+                }
+
+                var result = JObject.Parse(responseBody);
+                return result["name"]?.ToString() ?? filename;
+            }
+            catch (Exception ex)
+            {
+                return null;
+            }
         }
 
         private async Task<string> ExecuteWorkflowAsync(string workflowJson)
@@ -297,17 +200,36 @@ namespace iviewer.Services
                     await Task.Delay(1000);
                     continue;
                 }
-
                 string statusBody = await statusResponse.Content.ReadAsStringAsync();
                 var statusJson = JObject.Parse(statusBody ?? "{}");
+                var promptData = statusJson[promptId];
+                if (promptData == null)
+                {
+                    await Task.Delay(1000);
+                    continue;
+                }
 
-                if (statusJson[promptId]?["status"]?["completed"]?.Value<bool>() == true)
+                var status = promptData["status"];
+                if (status?["completed"]?.Value<bool>() == true)
                 {
                     return FindGeneratedVideo();
+                }
+                else if (status?["status_str"]?.ToString() == "error" || HasExecutionError(status?["messages"]))
+                {
+                    return string.Empty; // Failure detected
                 }
 
                 await Task.Delay(1000);
             }
+        }
+
+        private bool HasExecutionError(JToken messagesToken)
+        {
+            if (messagesToken is JArray messages)
+            {
+                return messages.Any(msg => msg[0]?.ToString() == "execution_error");
+            }
+            return false;
         }
 
         private string FindGeneratedVideo()
@@ -722,27 +644,36 @@ namespace iviewer.Helpers
     {
         public static (int Width, int Height) Calculate(string imagePath)
         {
-            double aspectRatio = 0;
-            int count = 0;
-            var startingWidth = 0;
-            var startingHeight = 0;
-
-            using (var startImg = System.Drawing.Image.FromFile(imagePath))
+            try
             {
-                startingWidth = startImg.Width;
-                startingHeight = startImg.Height;
-                aspectRatio = (double)startImg.Width / startImg.Height;
+                double aspectRatio = 0;
+                int count = 0;
+                var startingWidth = 0;
+                var startingHeight = 0;
+
+                using (var startImg = System.Drawing.Image.FromFile(imagePath))
+                {
+                    startingWidth = startImg.Width;
+                    startingHeight = startImg.Height;
+                    aspectRatio = (double)startImg.Width / startImg.Height;
+                }
+
+                int targetPixels = 720 * 512;
+                double sqrtPixels = Math.Sqrt(targetPixels * aspectRatio);
+
+                int targetWidth = (int)Math.Ceiling(sqrtPixels / 16.0) * 16;
+                int targetHeight = (int)Math.Ceiling((targetWidth / aspectRatio) / 16.0) * 16;
+
+                Debug.Print($"Resolution: {startingWidth}x{startingHeight} => {targetWidth}x{targetHeight}");
+
+                return (targetWidth, targetHeight);
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show("Error calculating resolution: " + ex.Message);
             }
 
-            int targetPixels = 720 * 512;
-            double sqrtPixels = Math.Sqrt(targetPixels * aspectRatio);
-
-            int targetWidth = (int)Math.Ceiling(sqrtPixels / 16.0) * 16;
-            int targetHeight = (int)Math.Ceiling((targetWidth / aspectRatio) / 16.0) * 16;
-
-            Debug.Print($"Resolution: {startingWidth}x{startingHeight} => {targetWidth}x{targetHeight}");
-
-            return (targetWidth, targetHeight);
+            return (0, 0);
         }
     }
 

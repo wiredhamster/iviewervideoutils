@@ -98,8 +98,8 @@ namespace iviewer.Video
                 }
                 else
                 {
-                    var newForm = new VideoGenerator();
-                    newForm.LoadState(pk);
+                    var newForm = new VideoGenerator(pk);
+                    //newForm.LoadState(pk);
                     newForm.Show();
                 }
             }
@@ -121,8 +121,8 @@ namespace iviewer.Video
                 }
                 else
                 {
-                    var newForm = new VideoGenerator();
-                    newForm.LoadState(clipState.VideoGenerationStatePK);
+                    var newForm = new VideoGenerator(clipState.VideoGenerationStatePK);
+                    //newForm.LoadState(clipState.VideoGenerationStatePK);
                     newForm.Show();
                 }
             }
@@ -165,7 +165,12 @@ namespace iviewer.Video
                 while (true)
                 {
                     // Process queue (e.g., all 'Queued' clips from DB)
-                    string sql = "SELECT TOP 1 PK, VideoGenerationStatePK FROM ClipGenerationStates WHERE Status = 'Queued' ORDER BY CreatedDate, OrderIndex";
+                    string sql = @"
+SELECT TOP 1 c.PK, c.VideoGenerationStatePK 
+FROM ClipGenerationStates c
+    JOIN VideoGenerationStates v ON c.VideoGenerationStatePK = v.PK
+WHERE c.Status = 'Queued' 
+ORDER BY v.CreatedDate, c.OrderIndex";
                     var dt = DB.SelectSingle(sql);
                     if (!dt.ContainsKey("PK")) break;
 
@@ -192,7 +197,7 @@ namespace iviewer.Video
                         var nextClip = ClipGenerationState.Load(sql);
                         if (nextClip != null && nextClip.ImagePath == "")
                         {
-                            var lastFrame = VideoUtils.ExtractLastFrame(result, _config.TempDir);
+                            var lastFrame = VideoUtils.ExtractLastFrame(result, _config.TempDir, true);
                             nextClip.ImagePath = lastFrame;
                             nextClip.Save();
 

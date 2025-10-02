@@ -8,6 +8,8 @@ using System.Diagnostics;
 using System.Linq;
 using System.Text;
 using System.Threading.Tasks;
+using SixLabors.ImageSharp;
+using SixLabors.ImageSharp.Processing;
 
 namespace iviewer
 {
@@ -118,7 +120,7 @@ namespace iviewer
                         {
                             newFps = fps * 3;
                         }
-                        else if (fps < 30)
+                        else if (fps < 30 && interpolate)
                         {
                             newFps = fps * 2;
                         }
@@ -218,7 +220,7 @@ namespace iviewer
 			return true;
 		}
 
-        private static async Task<string> AdjustSpeedAsync(string inputPath, double speed)
+        private static async Task<string> AdjustSpeedAsync(string inputPath, double speed, bool highQuality = true)
         {
             if (Math.Abs(speed - 1.0) < 0.001) return inputPath; // No adjustment needed
 
@@ -226,23 +228,37 @@ namespace iviewer
             var mediaInfo = await FFProbe.AnalyseAsync(inputPath);
             double originalFps = mediaInfo.PrimaryVideoStream.FrameRate;
 
+            // Set uniform FPS (high for export quality)
+            double uniformFps = originalFps;
+
+            if (originalFps < 15 && highQuality)
+            {
+                uniformFps = originalFps * 6;
+            }
+            else if (originalFps < 30 && highQuality)
+            {
+                uniformFps = originalFps * 4;
+            }
+
             // Create temp output path
             string tempOutput = Path.ChangeExtension(Path.GetTempFileName(), ".mp4");
 
             // Build custom filter string
-            string vfArg = string.Empty;
-            double N = 1.0 / speed; // Slowdown factor (N>1 for slow, N<1 for fast)
+            string vfArg = $"setpts=PTS/{speed}";
+            double effectiveFps = originalFps * speed;
 
-            if (speed > 1.0)
+            if (speed <= 1.0)
             {
-                // Faster: Accelerate timestamps (drops frames)
-                vfArg = $"setpts=PTS*{N}";
+                // For slow/normal: setpts first (slows if <1), then interpolate up if needed
+                vfArg += $",minterpolate=fps={uniformFps}";
             }
-            else if (speed < 1.0)
+            else
             {
-                // Slower: Interpolate to high FPS, then stretch PTS for smooth slow-mo
-                double interpFps = originalFps * N;
-                vfArg = $"minterpolate=fps={interpFps},setpts=PTS*{N}";
+                // For fast: Interpolate to effective first, then setpts, then downsample if needed
+                double interpFps = effectiveFps;
+                vfArg = $"minterpolate=fps={interpFps},{vfArg}";
+                effectiveFps = interpFps * speed;
+                vfArg += $",fps={uniformFps}";
             }
 
             await FFMpegArguments
@@ -254,8 +270,8 @@ namespace iviewer
                         opt.WithCustomArgument($"-vf \"{vfArg}\"");
                     }
 
-                    // Force output FPS to original (critical for matching in stitch)
-                    opt.WithFramerate(originalFps);
+                    // Force output FPS to uniform
+                    opt.WithFramerate(uniformFps);
 
                     // No audio
                     opt.DisableChannel(Channel.Audio);
@@ -265,7 +281,7 @@ namespace iviewer
             return tempOutput;
         }
 
-        public static string ExtractLastFrame(string inputVideoPath, string outputDirectory)
+        public static string ExtractLastFrame(string inputVideoPath, string outputDirectory, bool upscale = false)
         {
             try
             {
@@ -287,7 +303,7 @@ namespace iviewer
                 if (!string.IsNullOrEmpty(outputDir) && !Directory.Exists(outputDir))
                     Directory.CreateDirectory(outputDir);
 
-                return ExtractLastFrameWithFrameCount(inputVideoPath, outputPath);
+                return ExtractLastFrameWithFrameCount(inputVideoPath, outputPath, upscale);
             }
             catch (Exception ex)
             {
@@ -299,7 +315,7 @@ namespace iviewer
         /// <summary>
         /// Counts total frames and extracts the last one
         /// </summary>
-        private static string ExtractLastFrameWithFrameCount(string inputVideoPath, string outputPath)
+        private static string ExtractLastFrameWithFrameCount(string inputVideoPath, string outputPath, bool upscale = false)
         {
             try
             {
@@ -322,6 +338,16 @@ namespace iviewer
                         .WithVideoCodec("png"))             // PNG codec
                     .ProcessSynchronously();
 
+                if (!success)
+                {
+                    return null;
+                }
+
+                if (upscale)
+                {
+                    outputPath = UpscaleImage(outputPath, Path.GetDirectoryName(outputPath), true);
+                }
+
                 return success ? outputPath : null;
             }
             catch
@@ -334,6 +360,29 @@ namespace iviewer
                 var success = FFMpeg.Snapshot(inputVideoPath, outputPath, captureTime: lastFrameTime);
                 return success ? outputPath : null;
             }
+        }
+
+        static string UpscaleImage(string input, string outputPath, bool deleteInput = true)
+        {
+            string upscaledPath = Path.Combine(outputPath, $"{Path.GetFileNameWithoutExtension(input)}_upscaled.png");
+
+            using (var image = SixLabors.ImageSharp.Image.Load(input))
+            { 
+                int newWidth = image.Width * 2;
+                int newHeight = image.Height * 2;
+
+                image.Mutate(x => x.Resize(newWidth, newHeight, KnownResamplers.Lanczos3));  // Lanczos3 for high-quality sharp upscale; alternatives: Bicubic, Welch
+
+                image.Save(upscaledPath);  // Save as PNG (or Jpeg for compression)
+            }
+
+            // Optional: Delete original extracted frame if not needed
+            if (deleteInput)
+            {
+                File.Delete(input);
+            }
+
+            return upscaledPath;
         }
 
         // Helper to get duration (in seconds)
@@ -358,7 +407,8 @@ namespace iviewer
             string transitionType,
             List<double> transitionDurations,
             List<double>? speeds = null,
-            bool deleteIntermediateFiles = true)
+            bool deleteIntermediateFiles = true,
+            bool highQuality = true)
         {
             try
             {
@@ -379,7 +429,7 @@ namespace iviewer
                 var tempFiles = new List<string>();
                 for (int i = 0; i < inputVideoPaths.Count; i++)
                 {
-                    string adjusted = await AdjustSpeedAsync(inputVideoPaths[i], speeds[i]);
+                    string adjusted = await AdjustSpeedAsync(inputVideoPaths[i], speeds[i], highQuality);
                     adjustedPaths.Add(adjusted);
                     if (adjusted != inputVideoPaths[i])
                     {
@@ -453,7 +503,6 @@ namespace iviewer
                 {
                     foreach (var temp in tempFiles.Where(File.Exists))
                     {
-                        var x = FFProbe.Analyse(temp);
                         try { File.Delete(temp); } catch { }
                     }
                 }
@@ -477,25 +526,33 @@ namespace iviewer
             {
                 var filterParts = new List<string>();
                 var durations = new List<double>();
-                
-                // Probe durations
+
+                // Probe durations and FPS
+                var fpsList = new List<double>();
                 for (int i = 0; i < inputVideoPaths.Count; i++)
                 {
                     var mediaInfo = await FFProbe.AnalyseAsync(inputVideoPaths[i]);
                     durations.Add(mediaInfo.Duration.TotalSeconds);
+                    fpsList.Add(mediaInfo.PrimaryVideoStream.FrameRate);
                 }
 
-                string currentLabel = "[0:v]";
-                double cumulativeOffset = durations[0]; // Start with the first clip's duration
+                // Choose common FPS (max or fixed high value)
+                double commonFps = Math.Max(60, fpsList.Max());
 
+                // Add FPS normalization filters for each input
+                for (int i = 0; i < inputVideoPaths.Count; i++)
+                {
+                    filterParts.Add($"[{i}:v]fps={commonFps}[norm{i}]");
+                }
+
+                string currentLabel = "[norm0]";
+                double cumulativeOffset = durations[0]; // Start with the first clip's duration
                 for (int i = 0; i < inputVideoPaths.Count - 1; i++)
                 {
                     double duration = transitionDurations[i];
-                    string nextLabel = $"[{i + 1}:v]";
+                    string nextLabel = $"[norm{i + 1}]";
                     string outputLabel = $"[v{i}]";
-
                     double offset = cumulativeOffset - duration;
-
                     if (duration > 0)
                     {
                         // xfade with correct offset (end of current minus overlap)
@@ -531,9 +588,9 @@ namespace iviewer
                         options.WithVideoCodec("libx264");
                         options.WithCustomArgument("-an"); // No audio for now
                         options.WithCustomArgument("-y"); // Overwrite output
+                        options.WithFramerate(commonFps); // Set output FPS to common
                     })
                     .ProcessAsynchronously();
-
                 return result;
             }
             catch (Exception ex)
