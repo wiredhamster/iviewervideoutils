@@ -1148,14 +1148,9 @@ namespace iviewer
 
                 // Determine appropriate status
                 string newStatus;
-                if (currentStatus == "Generating")
+                if (currentStatus == "Generating" || currentStatus == "Queued" || currentStatus == "Failed")
                 {
-                    // Don't change if currently generating
-                    return;
-                }
-                else if (currentStatus == "Queued")
-                {
-                    // Don't change if currently queued
+                    // Don't change
                     return;
                 }
                 else if (!hasValidData)
@@ -1214,16 +1209,21 @@ namespace iviewer
 
         private bool HasRowBeenModifiedSinceGeneration(int rowIndex)
         {
-            // This is a simple implementation - you might want to store generation timestamps
-            // or checksums for more accurate tracking
-
             string videoPath = RowData(rowIndex).VideoPath;
             if (!File.Exists(videoPath))
                 return true; // Video was deleted, so it's effectively modified
 
-            // For now, we'll assume if the video exists and we're calling this method,
-            // it might have been modified. In a more robust implementation, you'd track
-            // the exact state when generation completed.
+            foreach (var clipState in _videoGenerationState.ClipGenerationStates)
+            {
+                if (clipState.PK == RowData(rowIndex).ClipGenerationStatePK)
+                {
+                    if (clipState.HasChanges)
+                    {
+                        return true;
+                    }
+                }
+            }
+
             return false;
         }
 

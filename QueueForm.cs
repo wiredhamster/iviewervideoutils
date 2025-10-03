@@ -234,7 +234,11 @@ ORDER BY v.CreatedDate, c.OrderIndex";
             var video = VideoGenerationState.Load(pk);
             if (video != null)
             {
-                if (video.ClipGenerationStates.Any(c => c.Status == "Generating"))
+                if (video.ClipGenerationStates.Any(c => c.Status == "Failed"))
+                {
+                    video.Status = "Failed";
+                }
+                else if (video.ClipGenerationStates.Any(c => c.Status == "Generating"))
                 {
                     video.Status = "Generating";
                 }
