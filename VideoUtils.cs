@@ -362,6 +362,34 @@ namespace iviewer
             }
         }
 
+        public static string ExtractFirstFrame(string videoPath, string outputPath, bool upscale = false)
+        {
+            string tempPng = Path.Combine(Path.GetDirectoryName(outputPath), Path.GetRandomFileName() + ".png");
+
+            // Use FFMpegCore to extract the first frame
+            FFMpegArguments.FromFileInput(videoPath)
+                .OutputToFile(tempPng, true, options => options
+                    .WithVideoCodec("png")
+                    .Seek(TimeSpan.Zero)
+                    .ForceFormat("image2")
+                    .WithCustomArgument("-vframes 1")
+                )
+                .ProcessSynchronously();
+
+            if (!File.Exists(tempPng))
+            {
+                throw new Exception("FFMpegCore failed to extract frame.");
+            }
+
+            if (upscale)
+            {
+                tempPng = UpscaleImage(tempPng, Path.GetDirectoryName(outputPath), true);
+            }
+
+            return tempPng;
+        }
+
+
         static string UpscaleImage(string input, string outputPath, bool deleteInput = true)
         {
             string upscaledPath = Path.Combine(outputPath, $"{Path.GetFileNameWithoutExtension(input)}_upscaled.png");
@@ -526,7 +554,6 @@ namespace iviewer
             {
                 var filterParts = new List<string>();
                 var durations = new List<double>();
-
                 // Probe durations and FPS
                 var fpsList = new List<double>();
                 for (int i = 0; i < inputVideoPaths.Count; i++)
@@ -539,10 +566,10 @@ namespace iviewer
                 // Choose common FPS (max or fixed high value)
                 double commonFps = Math.Max(60, fpsList.Max());
 
-                // Add FPS normalization filters for each input
+                // Add FPS normalization filters for each input with consistent timebase
                 for (int i = 0; i < inputVideoPaths.Count; i++)
                 {
-                    filterParts.Add($"[{i}:v]fps={commonFps}[norm{i}]");
+                    filterParts.Add($"[{i}:v]fps={commonFps},settb=1/1000000[norm{i}]");
                 }
 
                 string currentLabel = "[norm0]";
@@ -555,13 +582,13 @@ namespace iviewer
                     double offset = cumulativeOffset - duration;
                     if (duration > 0)
                     {
-                        // xfade with correct offset (end of current minus overlap)
-                        filterParts.Add($"{currentLabel}{nextLabel}xfade=transition={transitionType}:duration={duration}:offset={offset}{outputLabel}");
+                        // xfade with correct offset and set timebase on output
+                        filterParts.Add($"{currentLabel}{nextLabel}xfade=transition={transitionType}:duration={duration}:offset={offset},settb=1/1000000{outputLabel}");
                     }
                     else
                     {
-                        // No transition: concat
-                        filterParts.Add($"{currentLabel}{nextLabel}concat=n=2:v=1:a=0{outputLabel}");
+                        // No transition: concat with set timebase on output
+                        filterParts.Add($"{currentLabel}{nextLabel}concat=n=2:v=1:a=0,settb=1/1000000{outputLabel}");
                     }
 
                     // Update cumulative (add next clip's net duration)
@@ -591,6 +618,7 @@ namespace iviewer
                         options.WithFramerate(commonFps); // Set output FPS to common
                     })
                     .ProcessAsynchronously();
+
                 return result;
             }
             catch (Exception ex)

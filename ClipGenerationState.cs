@@ -9,6 +9,14 @@ namespace iviewer
 {
     internal class ClipGenerationState : BusinessObject
     {
+        public ClipGenerationState()
+        {
+            debug = new StringBuilder();
+            debug.AppendLine(Environment.StackTrace);
+        }
+
+        public StringBuilder debug;
+
         public static ClipGenerationState New()
         {
             var state = new ClipGenerationState();

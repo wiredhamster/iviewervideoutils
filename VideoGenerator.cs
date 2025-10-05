@@ -3,6 +3,8 @@ using iviewer.Services;
 using iviewer.Video;
 using System.Data;
 using System.Diagnostics;
+using System.Security.Cryptography;
+using Xamarin.Forms.Internals;
 
 namespace iviewer
 {
@@ -138,6 +140,40 @@ namespace iviewer
             dgvPrompts.CurrentCell = dgvPrompts.Rows[insertIndex].Cells["colPrompt"];
         }
 
+        bool CheckClipStates()
+        {
+            var rowDatas = new List<VideoRowData>();
+            for (var i = 0; i < dgvPrompts.RowCount; i++)
+            {
+                rowDatas.Add(dgvPrompts.Rows[i].Tag as VideoRowData);
+            }
+
+            var intersect = _videoGenerationState.ClipGenerationStates.Select(c => c.PK).Intersect(rowDatas.Select(d => d.ClipGenerationStatePK));
+            var excessClips = _videoGenerationState.ClipGenerationStates.Select(c => c.PK).Except(intersect);
+            var excessRowDatas = rowDatas.Select(d => d.ClipGenerationStatePK).Except(intersect);
+
+            Debug.WriteLine("Clip state mismatch");
+            Debug.WriteLine("Matching Clip State / Row Data pairs");
+            foreach (var pk in intersect)
+            {
+                Debug.WriteLine(pk);
+            }
+
+            Debug.WriteLine("Excess Clip States");
+            foreach (var pk in excessClips)
+            {
+                Debug.WriteLine(pk);
+            }
+
+            Debug.WriteLine("Excess Row Datas");
+            foreach (var pk in excessRowDatas)
+            {
+                Debug.WriteLine(pk);
+            }
+
+            return true;
+        }
+
         private string GetDefaultOrPreviousPrompt()
         {
             if (dgvPrompts.Rows.Count > 0)
@@ -215,6 +251,11 @@ namespace iviewer
         private async void OnQueueAllClick()
         {
             if (!ValidateGenerateAll()) return;
+
+            if (_videoGenerationState.ClipGenerationStates.Count != dgvPrompts.Rows.Count)
+            {
+                // Why??
+            }
 
             try
             {
@@ -335,8 +376,10 @@ namespace iviewer
 
                 // Remove clip
                 var clip = _videoGenerationState?.ClipGenerationStates.FirstOrDefault(c => c.PK == RowData(rowIndex).ClipGenerationStatePK);
+                Guid pk = Guid.Empty;
                 if (clip != null)
                 {
+                    pk = clip.PK;
                     _videoGenerationState.ClipGenerationStates.Remove(clip);
                     clip.Delete();
                 }
@@ -344,7 +387,7 @@ namespace iviewer
                 // Remove row
                 dgvPrompts.Rows.RemoveAt(rowIndex);
 
-                EventBus.RaiseItemQueued(Guid.Empty);
+                EventBus.RaiseClipDeleted(pk, _videoGenerationStatePK);
 
                 UpdateState();
                 UpdateUI();
@@ -634,7 +677,7 @@ namespace iviewer
             _videoGenerationState.Status = "Exporting";
             _videoGenerationState.Save();
 
-            EventBus.RaiseItemQueued(Guid.Empty);
+            EventBus.RaiseVideoStatusChanged(_videoGenerationStatePK, _videoGenerationState.Status);
 
             if (!_highQualityPreview)
             {
@@ -678,7 +721,7 @@ namespace iviewer
                 _videoGenerationState.Status = "Exported";
                 _videoGenerationState.Save();
 
-                EventBus.RaiseItemQueued(Guid.Empty);
+                EventBus.RaiseVideoStatusChanged(_videoGenerationStatePK, _videoGenerationState.Status);
 
                 MessageBox.Show($"Video exported successfully to: {exportPath}");
             }
@@ -689,7 +732,7 @@ namespace iviewer
                 _videoGenerationState.Status = "Failed";
                 _videoGenerationState.Save();
 
-                EventBus.RaiseItemQueued(Guid.Empty);
+                EventBus.RaiseVideoStatusChanged(_videoGenerationStatePK, _videoGenerationState.Status);
 
                 MessageBox.Show($"Export failed: {ex.Message}");
             }
@@ -811,7 +854,7 @@ namespace iviewer
 
         private void UpdateResolutionLabel()
         {
-            if (!string.IsNullOrEmpty(RowData(0).ImagePath))
+            if (!string.IsNullOrEmpty(RowData(0)?.ImagePath))
             {
                 var (width, height) = ResolutionCalculator.Calculate(RowData(0).ImagePath);
                 lblResolution.Text = $"{width}x{height}";
@@ -890,11 +933,11 @@ namespace iviewer
 
         #region Data Refresh
 
-        private void OnClipStatusChanged(Guid clipPK, string newStatus)
+        private void OnClipStatusChanged(Guid clipPK, Guid videoPK, string newStatus)
         {
             if (InvokeRequired)
             {
-                Invoke(new Action<Guid, string>(OnClipStatusChanged), clipPK, newStatus);
+                Invoke(new Action<Guid, Guid, string>(OnClipStatusChanged), clipPK, videoPK, newStatus);
                 return;
             }
 
@@ -976,14 +1019,23 @@ namespace iviewer
 
         private void HandleImageSelection(int rowIndex)
         {
-            using var ofd = new OpenFileDialog { Filter = "Images|*.png;*.jpg;*.jpeg" };
+            using var ofd = new OpenFileDialog { Filter = "Media|*.png;*.jpg;*.jpeg;*.mp4" };
             if (ofd.ShowDialog() == DialogResult.OK)
             {
                 // Check if this row was previously generated
                 bool wasGenerated = dgvPrompts.Rows[rowIndex].Cells["colQueue"].Value?.ToString() == "Generated";
+                string thumbnailPath = ofd.FileName;
+                if (Path.GetExtension(ofd.FileName).ToLower() == ".mp4")
+                {
+                    // Extract first frame for video
+                    thumbnailPath = VideoUtils.ExtractFirstFrame(ofd.FileName, _fileService.TempDir, true);
+                    _tempFiles.Add(thumbnailPath);
+                    RowData(rowIndex).VideoPath = ofd.FileName;
+                    wasGenerated = true;
+                }
 
-                RowData(rowIndex).ImagePath = ofd.FileName;
-                dgvPrompts.Rows[rowIndex].Cells["colImage"].Value = ImageHelper.CreateThumbnail(ofd.FileName, null, 160);
+                dgvPrompts.Rows[rowIndex].Cells["colImage"].Value = ImageHelper.CreateThumbnail(thumbnailPath, null, 160);
+                RowData(rowIndex).ImagePath = thumbnailPath;
 
                 // If it was previously generated, mark for regeneration
                 if (wasGenerated)
@@ -1062,17 +1114,18 @@ namespace iviewer
             if (!isValid)
             {
                 DataGridViewRow row;
-                for (var i = dgvPrompts.Rows.Count; i >= 0; i--)
+                var found = false;
+
+                for (var i = dgvPrompts.Rows.Count - 1; i >= 0; i--)
                 {
                     row = dgvPrompts.Rows[i];
 
-                    var found = false;
                     if (found)
                     {
                         // Row is valid if the row above it is in the queue
-                        return RowData(i).Status == "Queued" || RowData(i).Status == "Generating";
+                        return dgvPrompts.Rows[i].Cells["colQueue"].Value.Equals("Queued") || dgvPrompts.Rows[i].Cells["colQueue"].Value.Equals("Generating");
                     }
-                    else if (RowData(i).ClipGenerationStatePK == RowData(row).ClipGenerationStatePK)
+                    else if (RowData(i).ClipGenerationStatePK == data.ClipGenerationStatePK)
                     {
                         found = true;
                     }
@@ -1393,7 +1446,10 @@ namespace iviewer
                 if (_videoGenerationState == null || _videoGenerationState.PK != _videoGenerationStatePK)
                 {
                     _videoGenerationState = VideoGenerationState.Load(_videoGenerationStatePK);
-                    LoadState();
+                    if (_videoGenerationState != null)
+                    {
+                        LoadState();
+                    }
                 }
 
                 if (_videoGenerationState == null)
@@ -1429,6 +1485,11 @@ namespace iviewer
                 var clipState = _videoGenerationState.ClipGenerationStates.FirstOrDefault(c => c.PK == rowData.ClipGenerationStatePK);
                 if (clipState == null)
                 {
+                    if (_videoGenerationState.ClipGenerationStates.Count >= dgvPrompts.RowCount)
+                    {
+                        CheckClipStates();
+                    }
+
                     clipState = ClipGenerationState.New();
                     if (rowData.ClipGenerationStatePK == Guid.Empty)
                     {
@@ -1448,6 +1509,8 @@ namespace iviewer
                 rowData.Prompt = clipState.Prompt;
                 // RowData(i).ImagePath = clipState.ImagePath;
             }
+
+            _videoGenerationState.Save();
         }
 
         public void LoadState(bool reloadRows = true)
@@ -1468,6 +1531,7 @@ namespace iviewer
                 dgvPrompts.Rows.Clear();
             }
 
+            // TODO: Seems like a bad idea to use ClipGenerationStates. why not load from the RowData?
             for (var rowIndex = 0; rowIndex < _videoGenerationState.ClipGenerationStates.Count; rowIndex++)
             {
                 var clipState = _videoGenerationState.ClipGenerationStates[rowIndex];
@@ -1475,6 +1539,9 @@ namespace iviewer
 
                 string imgPath = clipState.ImagePath;
                 string vidPath = clipState.VideoPath;
+
+                _tempFiles.Add(imgPath);
+                _tempFiles.Add(vidPath);
 
                 if (reloadRows)
                 {
@@ -1525,12 +1592,15 @@ namespace iviewer
             if (_videoGenerationState != null && _videoGenerationState.ClipGenerationStates.Any(c => c.Status == "Queued" || c.Status == "Generating"))
             {
                 // Video is in the queue. Close without confirmation.
+                _videoGenerationState.Save();
             }
             else
             {
                 var action = _isExported ? DialogResult.Yes : MessageBox.Show("Discard?", "Video Generator", MessageBoxButtons.YesNoCancel);
                 if (action == DialogResult.Yes)
                 {
+                    _videoGenerationState.Save();
+
                     _fileService.CleanupTempFiles(_tempFiles);
 
                     foreach (DataGridViewRow row in dgvPrompts.Rows)
@@ -1556,13 +1626,17 @@ namespace iviewer
 
                     }
 
+                    var clipPKs = new HashSet<Guid>();
+
                     if (_videoGenerationState != null)
                     {
+                        _videoGenerationState.ClipGenerationStates.ForEach(c => clipPKs.Add(c.PK));
+
                         _videoGenerationState.Delete();
                         _videoGenerationState = null;
                     }
 
-                    EventBus.RaiseItemQueued(Guid.Empty);
+                    EventBus.RaiseVideoDeleted(_videoGenerationStatePK, clipPKs);
                 }
                 else if (action == DialogResult.Cancel)
                 {
@@ -1626,7 +1700,30 @@ namespace iviewer
 
     public class VideoRowData
     {
-        public Guid ClipGenerationStatePK { get; set; } = Guid.Empty;
+        public VideoRowData()
+        {
+            // Just so we can have a breakpoint in the ctor to see if we're creating a VideoRowData for a row where we already have one.
+        }
+
+        public Guid ClipGenerationStatePK 
+        {
+            get => clipGenerationStatePK;
+            set
+            {
+                if (clipGenerationStatePK != value)
+                {
+                    if (clipGenerationStatePK != Guid.Empty)
+                    {
+                        // Why are we changing an existing PK?
+                    }
+
+                    clipGenerationStatePK = value;
+                }
+            }
+        }
+        Guid clipGenerationStatePK = Guid.Empty;
+
+
         public string Prompt { get; set; } = "";
         public string ImagePath { get; set; } = "";
         public string EndImagePath { get; set; } = "";
@@ -1634,6 +1731,7 @@ namespace iviewer
         public string WorkflowJson { get; set; } = "";
         public double TransitionDuration { get; set; }
         public double ClipSpeed { get; set; }
+        // Breakpoint is to find out if it's actually used.
         public string Status { get; set; } = "Queue";  // e.g., "Queue", "Generating", "Generated"
 
         // Optional: Link to metadata (populate post-generation)

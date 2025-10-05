@@ -33,11 +33,15 @@ namespace iviewer.Services
                     clip.Status = "Queued";
                     clip.Save();
 
-                    EventBus.RaiseItemQueued(clip.PK);
+                    EventBus.RaiseClipQueued(clip.PK);
                 }
             }
 
-            if (state.ClipGenerationStates.Any(c => c.Status == "Generating"))
+            if (state.ClipGenerationStates.Any(c => c.Status == "Failed"))
+            {
+                state.Status = "Failed";
+            }
+            else if (state.ClipGenerationStates.Any(c => c.Status == "Generating"))
             {
                 state.Status = "Generating";
             }
@@ -54,9 +58,11 @@ namespace iviewer.Services
                 state.Status = "Unknown";
             }
 
-            state.Save();
-
-            EventBus.RaiseItemQueued(Guid.Empty);
+            if (state.HasChanges)
+            {
+                state.Save();
+                EventBus.RaiseVideoStatusChanged(state.PK, state.Status);
+            }
         }
 
         public async Task<string> GenerateVideoAsync(ClipGenerationState clip)
@@ -94,7 +100,7 @@ namespace iviewer.Services
             clip.Status = "Generating";
             clip.Save();
 
-            EventBus.RaiseClipStatusChanged(clip.PK, clip.Status);
+            EventBus.RaiseClipStatusChanged(clip.PK, video.PK, clip.Status);
 
             string videoPath = await ExecuteWorkflowAsync(workflowJson); //, rowData, rowIndex);
 
@@ -133,7 +139,6 @@ namespace iviewer.Services
                 .Replace("{WIDTH}", width.ToString())
                 .Replace("{HEIGHT}", height.ToString());
         }
-
 
         private async Task<string> UploadImageAsync(string imagePath)
         {
