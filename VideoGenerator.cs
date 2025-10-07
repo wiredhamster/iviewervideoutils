@@ -1,4 +1,5 @@
-﻿using iviewer.Helpers;
+﻿using FFMpegCore.Enums;
+using iviewer.Helpers;
 using iviewer.Services;
 using iviewer.Video;
 using System.Data;
@@ -41,7 +42,7 @@ namespace iviewer
         private bool _isPlayingAll = false;
         private int _currentPlayAllIndex = 0;
         private List<string> _playAllVideos = new List<string>();
-        private List<Button> _videoButtons = new List<Button>(); // Track video buttons for highlighting
+        private List<ClipControl> _videoClipControls = new List<ClipControl>(); // Track video buttons for highlighting
         private Button _currentlyHighlightedButton = null;
 
         // Transition settings - modify these to experiment with different types
@@ -306,7 +307,7 @@ namespace iviewer
                             break;
                         }
                     }
-                }                
+                }
             }
         }
 
@@ -474,25 +475,24 @@ namespace iviewer
 
         private void LoadPerPromptVideosTab()
         {
-            _videoButtons.Clear();
+            _videoClipControls.Clear();
 
-            var flowPanel = VideoPlayerHelper.CreateVideoButtonsPanel(
+            var flowPanel = CreateVideoButtonsPanel(
                 VideoRows,
                 GenerateClipInfos(),
                 OnVideoButtonClick,
-                OnTransitionDurationChanged,
-                OnClipSpeedChanged,
-                _videoButtons);
+                OnTransitionChanged,
+                _videoClipControls);
 
             // Configure flow panel to not overlap buttons
             flowPanel.Anchor = AnchorStyles.Left | AnchorStyles.Right | AnchorStyles.Bottom;
-            flowPanel.Location = new Point(3, tabPagePerPrompt.Height - 200);
-            flowPanel.Size = new Size(986, 165);
+            flowPanel.Location = new Point(3, tabPagePerPrompt.Height - 395);
+            flowPanel.Size = new Size(986, 395);
             flowPanel.AutoScroll = true;
 
             // Clear existing dynamic controls but keep the buttons and video player
             var controlsToRemove = tabPagePerPrompt.Controls.OfType<Control>()
-                .Where(c => c != videoPlayerPerPrompt && c != btnPreview && c != btnImport && c != btnPlayAll)
+                .Where(c => c != videoPlayerPerPrompt && c != btnPreview && c != btnImport && c != btnPlayAll && c != btnPlay2x)
                 .ToList();
 
             foreach (var control in controlsToRemove)
@@ -509,24 +509,145 @@ namespace iviewer
             btnPreview.BringToFront();
             btnImport.BringToFront();
             btnPlayAll.BringToFront();
+            btnPlay2x.BringToFront();
 
             // Adjust video player size to accommodate flow panel
-            videoPlayerPerPrompt.Size = new Size(986, tabPagePerPrompt.Height - 235);
+            videoPlayerPerPrompt.Size = new Size(986, tabPagePerPrompt.Height - 400);
         }
 
-        private void OnTransitionDurationChanged(int clipIndex, double duration)
+        FlowLayoutPanel CreateVideoButtonsPanel(
+           List<VideoRowData> videoRows,
+           List<VideoClipInfo> clipInfos,
+           Action<int, string, double> onVideoClick,
+           Action<int, double, string, double, int, int> onTransitionChanged,
+           List<ClipControl> clipControls = null)
         {
-            if (clipIndex >= 0)
+            var flowPanel = new FlowLayoutPanel
             {
-                RowData(clipIndex).TransitionDuration = duration;
+                Dock = DockStyle.Bottom,
+                Height = 395,
+                AutoScroll = true,
+                FlowDirection = FlowDirection.LeftToRight
+            };
+
+            for (int i = 0; i < videoRows.Count; i++)
+            {
+                var info = clipInfos.Count > i ? clipInfos[i] : new VideoClipInfo();
+                int currentIndex = i; // Capture for closure
+
+                var clipControl = new ClipControl();
+                clipControl.Enabled = false;
+                clipControl.btnClip.Text = $"Clip {i + 1}";
+                clipControl.Tag = i;
+                clipControl.Enabled = false;
+
+                flowPanel.Controls.Add(clipControl);
+
+                // Add to tracker if provided
+                clipControls?.Add(clipControl);
+
+                if (i < videoRows.Count)
+                {
+                    // Common change handler
+                    EventHandler changeHandler = (sender, e) =>
+                    {
+                        bool isValid = true;
+
+                        // Validate speed (clip-level, but include since it's per row)
+                        if (!double.TryParse(clipControl.txtSpeed.Text, out double speed) || speed <= 0 || speed > 5)
+                        {
+                            clipControl.txtSpeed.BackColor = Color.LightPink;
+                            isValid = false;
+                        }
+                        else
+                        {
+                            clipControl.txtSpeed.BackColor = Color.White;
+                        }
+
+                        // Validate transition type
+                        string transitionType = clipControl.cboEffect.SelectedItem?.ToString() ?? "None";
+                        // Add any validation if needed, e.g., if (string.IsNullOrEmpty(transitionType)) isValid = false;
+
+                        // Validate duration
+                        if (!double.TryParse(clipControl.txtLength.Text, out double duration) || duration < 0 || duration > 5)
+                        {
+                            clipControl.txtLength.BackColor = Color.LightPink;
+                            isValid = false;
+                        }
+                        else
+                        {
+                            clipControl.txtLength.BackColor = Color.White;
+                        }
+
+                        // Validate drop frames
+                        if (!int.TryParse(clipControl.txtDropFrames.Text, out int dropFrames) || dropFrames < 0)
+                        {
+                            clipControl.txtDropFrames.BackColor = Color.LightPink;
+                            isValid = false;
+                        }
+                        else
+                        {
+                            clipControl.txtDropFrames.BackColor = Color.White;
+                        }
+
+                        // Validate add frames
+                        if (!int.TryParse(clipControl.txtAddFrames.Text, out int addFrames) || addFrames < 0)
+                        {
+                            clipControl.txtAddFrames.BackColor = Color.LightPink;
+                            isValid = false;
+                        }
+                        else
+                        {
+                            clipControl.txtAddFrames.BackColor = Color.White;
+                        }
+
+                        clipControl.EnableTransitionControls();
+
+                        if (isValid)
+                        {
+                            onTransitionChanged(currentIndex, speed, transitionType, duration, dropFrames, addFrames);
+                        }
+                    };
+
+                    // Wire up events
+                    clipControl.txtSpeed.TextChanged += changeHandler;
+                    clipControl.cboEffect.SelectedIndexChanged += changeHandler;
+                    clipControl.txtLength.TextChanged += changeHandler;
+                    clipControl.txtDropFrames.TextChanged += changeHandler;
+                    clipControl.txtAddFrames.TextChanged += changeHandler;
+                }
+
+                if (i == videoRows.Count - 1)
+                {
+                    clipControl.LastClip = true;
+                }
+
+                if (File.Exists(videoRows[i].VideoPath))
+                {
+                    clipControl.btnClip.Click += (s, e) => onVideoClick(currentIndex, videoRows[currentIndex].VideoPath, videoRows[currentIndex].ClipSpeed);
+                    clipControl.Enabled = true;
+                }
+                else
+                {
+                    clipControl.Enabled = false;
+                }
+
+                clipControl.EnableTransitionControls();
             }
+
+            return flowPanel;
         }
 
-        private void OnClipSpeedChanged(int clipIndex, double speed)
+        private void OnTransitionChanged(int clipIndex, double speed, string transitionType, double duration, int dropFrames, int addFrames)
         {
             if (clipIndex >= 0)
             {
-                RowData(clipIndex).ClipSpeed = speed;
+                var rowData = RowData(clipIndex);
+                rowData.ClipSpeed = speed;
+                rowData.TransitionType = transitionType;
+                rowData.TransitionDuration = duration;
+                rowData.DropFrames = dropFrames;
+                rowData.AddFrames = addFrames;
             }
         }
 
@@ -539,6 +660,11 @@ namespace iviewer
                 // Dispose previous stream
                 streamRef?.Dispose();
                 streamRef = null;
+
+                if (string.IsNullOrEmpty(videoPath))
+                {
+                    return;
+                }
 
                 // Normalize path
                 string normalizedPath = Path.GetFullPath(videoPath);
@@ -572,9 +698,9 @@ namespace iviewer
             ResetAllVideoButtonHighlights();
 
             // Temporarily highlight the selected button
-            if (videoIndex < _videoButtons.Count && _videoButtons[videoIndex] != null)
+            if (videoIndex < _videoClipControls.Count && _videoClipControls[videoIndex] != null)
             {
-                var button = _videoButtons[videoIndex];
+                var button = _videoClipControls[videoIndex];
                 button.BackColor = Color.LightYellow;
                 button.ForeColor = Color.DarkOrange;
 
@@ -633,12 +759,27 @@ namespace iviewer
 
             // Create preview with transitions but without upscaling/interpolation
             // TODO: Why not just pass the valid row datas.
-            bool success = await VideoUtils.StitchVideosWithTransitionsAsync(
-                ValidVideoRows.Select(r => r.VideoPath).ToList<string>(),
+            //bool success = await VideoUtils.StitchVideosWithTransitionsAsync(
+            //    ValidVideoRows.Select(r => r.VideoPath).ToList<string>(),
+            //    previewPath,
+            //    TRANSITION_TYPE,
+            //    ValidVideoRows.Select(r => r.TransitionDuration).ToList<double>(),
+            //    ValidVideoRows.Select(r => r.ClipSpeed).ToList<double>(),
+            //    true,
+            //    highQuality);
+
+            foreach (var row in ValidVideoRows)
+            {
+                var transitionType = row.TransitionType == "Interpolate" ? VideoUtils.TransitionType.Interpolate
+                        : row.TransitionType == "Fade" ? VideoUtils.TransitionType.Fade
+                        : VideoUtils.TransitionType.None;
+
+                var junctionParameters = new VideoUtils.JunctionParameters(transitionType, row.TransitionDuration, row.DropFrames, row.AddFrames);
+                row.JunctionParameters = junctionParameters;
+            }
+
+            var success = await VideoUtils.StitchVideosWithTransitionsAsync(ValidVideoRows.ToList(),
                 previewPath,
-                TRANSITION_TYPE,
-                ValidVideoRows.Select(r => r.TransitionDuration).ToList<double>(),
-                ValidVideoRows.Select(r => r.ClipSpeed).ToList<double>(),
                 true,
                 highQuality);
 
@@ -1292,7 +1433,7 @@ namespace iviewer
 
         #region Play All Feature
 
-        private void StartPlayAllSequence()
+        private void StartPlayAllSequence(double speedFactor = 1)
         {
             if (_isPlayingAll)
             {
@@ -1313,7 +1454,7 @@ namespace iviewer
             btnPlayAll.Text = "Stop All";
             btnPlayAll.BackColor = Color.LightCoral;
 
-            PlayNextVideoInSequence();
+            PlayNextVideoInSequence(speedFactor);
         }
 
         private void StopPlayAllSequence()
@@ -1330,7 +1471,7 @@ namespace iviewer
             videoPlayerPerPrompt?.StopAndHide();
         }
 
-        private async void PlayNextVideoInSequence()
+        private async void PlayNextVideoInSequence(double speedFactor)
         {
             if (!_isPlayingAll || _currentPlayAllIndex >= _playAllVideos.Count)
             {
@@ -1350,10 +1491,10 @@ namespace iviewer
                 HighlightCurrentVideoButton(_currentPlayAllIndex);
 
                 // Load and play the video
-                LoadVideoInPlayer(videoPlayerPerPrompt, videoPath, ref _perPromptStream, RowData(_currentPlayAllIndex).ClipSpeed);
+                LoadVideoInPlayer(videoPlayerPerPrompt, videoPath, ref _perPromptStream, RowData(_currentPlayAllIndex).ClipSpeed * speedFactor);
 
                 // Get video duration and wait for it to complete
-                double videoDuration = VideoUtils.GetVideoDuration(videoPath) / RowData(_currentPlayAllIndex).ClipSpeed;
+                double videoDuration = VideoUtils.GetVideoDuration(videoPath) / (RowData(_currentPlayAllIndex).ClipSpeed * speedFactor);
 
                 // Wait for video to complete (with small buffer)
                 await Task.Delay(TimeSpan.FromSeconds(videoDuration + 0.2));
@@ -1362,7 +1503,7 @@ namespace iviewer
                 if (_isPlayingAll)
                 {
                     _currentPlayAllIndex++;
-                    PlayNextVideoInSequence();
+                    PlayNextVideoInSequence(speedFactor);
                 }
             }
             catch (Exception ex)
@@ -1372,7 +1513,7 @@ namespace iviewer
                 if (_isPlayingAll)
                 {
                     _currentPlayAllIndex++;
-                    PlayNextVideoInSequence();
+                    PlayNextVideoInSequence(speedFactor);
                 }
             }
         }
@@ -1383,9 +1524,9 @@ namespace iviewer
             ResetAllVideoButtonHighlights();
 
             // Find and highlight the current button
-            if (videoIndex < _videoButtons.Count && _videoButtons[videoIndex] != null)
+            if (videoIndex < _videoClipControls.Count && _videoClipControls[videoIndex] != null)
             {
-                var button = _videoButtons[videoIndex];
+                var button = _videoClipControls[videoIndex].btnClip;
                 _currentlyHighlightedButton = button;
 
                 // Store original colors if not already stored
@@ -1407,8 +1548,10 @@ namespace iviewer
 
         private void ResetAllVideoButtonHighlights()
         {
-            foreach (var button in _videoButtons.Where(b => b != null))
+            foreach (var clipControl in _videoClipControls.Where(b => b != null))
             {
+                var button = clipControl.btnClip;
+
                 // Restore original colors
                 if (button.Tag is ButtonColors originalColors)
                 {
@@ -1514,7 +1657,7 @@ namespace iviewer
         }
 
         public void LoadState(bool reloadRows = true)
-        {   
+        {
             if (_videoGenerationState == null)
             {
                 // ??
@@ -1565,7 +1708,7 @@ namespace iviewer
                 dgvPrompts.Rows[rowIndex].Cells["colImage"].Value = ImageHelper.CreateThumbnail(imgPath, null, 160);
                 dgvPrompts.Rows[rowIndex].Cells["colPrompt"].Value = clipState.Prompt;
                 dgvPrompts.Rows[rowIndex].Cells["colLora"].Value = "Select LoRA";
-                dgvPrompts.Rows[rowIndex].Cells["colQueue"].Value = clipState.Status;                
+                dgvPrompts.Rows[rowIndex].Cells["colQueue"].Value = clipState.Status;
             }
         }
 
@@ -1673,7 +1816,7 @@ namespace iviewer
                     if (File.Exists(RowData(row).VideoPath))
                     {
                         yield return RowData(row);
-                    } 
+                    }
                 }
             }
         }
@@ -1729,8 +1872,15 @@ namespace iviewer
         public string EndImagePath { get; set; } = "";
         public string VideoPath { get; set; } = "";
         public string WorkflowJson { get; set; } = "";
+        public string TransitionType { get; set; } = "Interpolate";
         public double TransitionDuration { get; set; }
+        public int DropFrames { get; set; } = 2;
+        public int AddFrames { get; set; } = 2;
         public double ClipSpeed { get; set; }
+
+        public VideoUtils.JunctionParameters JunctionParameters { get; set; }
+
+
         // Breakpoint is to find out if it's actually used.
         public string Status { get; set; } = "Queue";  // e.g., "Queue", "Generating", "Generated"
 

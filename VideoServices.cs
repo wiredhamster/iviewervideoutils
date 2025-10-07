@@ -1,5 +1,6 @@
 ﻿using FFMpegCore;
 using iviewer.Helpers;
+using iviewer.Video;
 using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
 using System.Diagnostics;
@@ -679,106 +680,6 @@ namespace iviewer.Helpers
             }
 
             return (0, 0);
-        }
-    }
-
-    public static class VideoPlayerHelper
-    {
-        public static FlowLayoutPanel CreateVideoButtonsPanel(
-            List<VideoRowData> videoRows,
-            List<VideoClipInfo> clipInfos,
-            Action<int, string, double> onVideoClick,
-            Action<int, double> onTransitionDurationChanged,
-            Action<int, double> onClipSpeedChanged,
-            List<Button> buttonTracker = null)
-        {
-            var flowPanel = new FlowLayoutPanel
-            {
-                Dock = DockStyle.Bottom,
-                Height = 400,
-                AutoScroll = true,
-                FlowDirection = FlowDirection.LeftToRight
-            };
-
-            for (int i = 0; i < videoRows.Count; i++)
-            {
-                var info = clipInfos.Count > i ? clipInfos[i] : new VideoClipInfo();
-                int currentIndex = i; // Capture for closure
-
-                var btnPlay = new Button
-                {
-                    Text = $"Clip {i + 1}: {Path.GetFileNameWithoutExtension(videoRows[i].VideoPath)}",
-                    Width = 200,
-                    Height = 50,
-                    Margin = new Padding(5),
-                    Tag = i,
-                    Enabled = false
-                };
-
-                flowPanel.Controls.Add(btnPlay);
-
-                // Add to tracker if provided
-                buttonTracker?.Add(btnPlay);
-
-                var txtDuration = new TextBox
-                {
-                    Size = new Size(40, 20),
-                    Text = videoRows[i].TransitionDuration.ToString(),
-                    Enabled = false
-                };
-
-                // Add transition duration control (except for the last clip)
-                if (i < videoRows.Count - 1)
-                {
-                    txtDuration.TextChanged += (s, e) => {
-                        if (double.TryParse(txtDuration.Text, out double newDuration) && newDuration >= 0 && newDuration <= 5)
-                        {
-                            onTransitionDurationChanged(currentIndex, newDuration);
-                            txtDuration.BackColor = Color.White;
-                        }
-                        else
-                        {
-                            txtDuration.BackColor = Color.LightPink;
-                        }
-                    };
-
-                    flowPanel.Controls.Add(txtDuration);
-                }
-
-                // Add speed controls
-                var txtSpeed = new TextBox
-                {
-                    Size = new Size(40, 20),
-                    Text = videoRows[i].ClipSpeed.ToString(),
-                    BackColor = Color.LightCyan,
-                    Enabled = false
-                };
-
-                txtSpeed.TextChanged += (s, e) => {
-                    if (double.TryParse(txtSpeed.Text, out double newSpeed) && newSpeed > 0 && newSpeed <= 5)
-                    {
-                        onClipSpeedChanged(currentIndex, newSpeed);
-                        txtSpeed.BackColor = Color.LightCyan;
-                    }
-                    else
-                    {
-                        txtSpeed.BackColor = Color.LightPink;
-                    }
-                };
-
-                flowPanel.Controls.Add(txtSpeed);
-
-
-                if (File.Exists(videoRows[i].VideoPath))
-                {
-                    btnPlay.Click += (s, e) => onVideoClick(currentIndex, videoRows[currentIndex].VideoPath, videoRows[currentIndex].ClipSpeed);
-                    btnPlay.Enabled = true;
-                    txtDuration.Enabled = true;
-                    txtSpeed.Enabled = true;
-                }
-            }
-
-            return flowPanel;
         }
     }
 }

@@ -30,20 +30,23 @@
         {
             btnClip = new Button();
             lblSpeed = new Label();
-            textBox1 = new TextBox();
+            txtSpeed = new TextBox();
             lblEffect = new Label();
             cboEffect = new ComboBox();
             txtDropFrames = new TextBox();
             txtAddFrames = new TextBox();
             lblDrop = new Label();
             lblAdd = new Label();
+            lblLength = new Label();
+            txtLength = new TextBox();
             SuspendLayout();
             // 
             // btnClip
             // 
+            btnClip.Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right;
             btnClip.Location = new Point(5, 0);
             btnClip.Name = "btnClip";
-            btnClip.Size = new Size(142, 23);
+            btnClip.Size = new Size(126, 23);
             btnClip.TabIndex = 0;
             btnClip.Text = "Clip";
             btnClip.UseVisualStyleBackColor = true;
@@ -57,13 +60,14 @@
             lblSpeed.TabIndex = 1;
             lblSpeed.Text = "Speed";
             // 
-            // textBox1
+            // txtSpeed
             // 
-            textBox1.Location = new Point(48, 29);
-            textBox1.Name = "textBox1";
-            textBox1.Size = new Size(99, 23);
-            textBox1.TabIndex = 2;
-            textBox1.Text = "1";
+            txtSpeed.Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right;
+            txtSpeed.Location = new Point(48, 29);
+            txtSpeed.Name = "txtSpeed";
+            txtSpeed.Size = new Size(83, 23);
+            txtSpeed.TabIndex = 2;
+            txtSpeed.Text = "1";
             // 
             // lblEffect
             // 
@@ -76,11 +80,12 @@
             // 
             // cboEffect
             // 
+            cboEffect.Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right;
             cboEffect.FormattingEnabled = true;
             cboEffect.Items.AddRange(new object[] { "None", "Interpolate", "Fade" });
             cboEffect.Location = new Point(48, 58);
             cboEffect.Name = "cboEffect";
-            cboEffect.Size = new Size(99, 23);
+            cboEffect.Size = new Size(83, 23);
             cboEffect.TabIndex = 4;
             cboEffect.Text = "Interpolate";
             // 
@@ -94,9 +99,10 @@
             // 
             // txtAddFrames
             // 
+            txtAddFrames.Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right;
             txtAddFrames.Location = new Point(48, 116);
             txtAddFrames.Name = "txtAddFrames";
-            txtAddFrames.Size = new Size(99, 23);
+            txtAddFrames.Size = new Size(83, 23);
             txtAddFrames.TabIndex = 6;
             txtAddFrames.Text = "2";
             // 
@@ -118,34 +124,59 @@
             lblAdd.TabIndex = 8;
             lblAdd.Text = "Add";
             // 
+            // lblLength
+            // 
+            lblLength.AutoSize = true;
+            lblLength.Location = new Point(5, 90);
+            lblLength.Name = "lblLength";
+            lblLength.Size = new Size(44, 15);
+            lblLength.TabIndex = 9;
+            lblLength.Text = "Length";
+            lblLength.Visible = false;
+            // 
+            // txtLength
+            // 
+            txtLength.Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right;
+            txtLength.Location = new Point(48, 87);
+            txtLength.Name = "txtLength";
+            txtLength.Size = new Size(83, 23);
+            txtLength.TabIndex = 10;
+            txtLength.Text = "0.1";
+            txtLength.Visible = false;
+            // 
             // ClipControl
             // 
             AutoScaleDimensions = new SizeF(7F, 15F);
             AutoScaleMode = AutoScaleMode.Font;
+            Controls.Add(txtLength);
+            Controls.Add(lblLength);
             Controls.Add(lblAdd);
             Controls.Add(lblDrop);
             Controls.Add(txtAddFrames);
             Controls.Add(txtDropFrames);
             Controls.Add(cboEffect);
             Controls.Add(lblEffect);
-            Controls.Add(textBox1);
+            Controls.Add(txtSpeed);
             Controls.Add(lblSpeed);
             Controls.Add(btnClip);
             Name = "ClipControl";
+            Size = new Size(134, 145);
             ResumeLayout(false);
             PerformLayout();
         }
 
         #endregion
 
-        private Button btnClip;
+        public Button btnClip;
         private Label lblSpeed;
-        private TextBox textBox1;
+        public TextBox txtSpeed;
         private Label lblEffect;
-        private ComboBox cboEffect;
-        private TextBox txtDropFrames;
-        private TextBox txtAddFrames;
+        public ComboBox cboEffect;
+        public TextBox txtDropFrames;
+        public TextBox txtAddFrames;
         private Label lblDrop;
         private Label lblAdd;
+        private Label lblLength;
+        public TextBox txtLength;
     }
 }

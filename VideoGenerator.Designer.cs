@@ -36,6 +36,7 @@ namespace iviewer
             DataGridViewCellStyle dataGridViewCellStyle1 = new DataGridViewCellStyle();
             tabControl = new TabControl();
             tabPageGeneration = new TabPage();
+            btnDeleteImage = new Button();
             lblProgress = new Label();
             pbProgress = new ProgressBar();
             dgvPrompts = new DataGridView();
@@ -54,7 +55,7 @@ namespace iviewer
             btnPlayAll = new Button();
             tabPageFullVideo = new TabPage();
             btnExport = new Button();
-            btnDeleteImage = new Button();
+            btnPlay2x = new Button();
             tabControl.SuspendLayout();
             tabPageGeneration.SuspendLayout();
             ((System.ComponentModel.ISupportInitialize)dgvPrompts).BeginInit();
@@ -92,6 +93,16 @@ namespace iviewer
             tabPageGeneration.TabIndex = 0;
             tabPageGeneration.Text = "Generation";
             tabPageGeneration.UseVisualStyleBackColor = true;
+            // 
+            // btnDeleteImage
+            // 
+            btnDeleteImage.Location = new Point(289, 6);
+            btnDeleteImage.Name = "btnDeleteImage";
+            btnDeleteImage.Size = new Size(105, 23);
+            btnDeleteImage.TabIndex = 9;
+            btnDeleteImage.Text = "- Delete Image";
+            btnDeleteImage.UseVisualStyleBackColor = true;
+            btnDeleteImage.Click += btnDeleteImage_Click;
             // 
             // lblProgress
             // 
@@ -131,12 +142,11 @@ namespace iviewer
             dgvPrompts.DefaultCellStyle = dataGridViewCellStyle2;
             dgvPrompts.Location = new Point(6, 35);
             dgvPrompts.Name = "dgvPrompts";
+            dgvPrompts.RowHeadersWidth = 50;
             dgvPrompts.RowTemplate.Height = 160;
             dgvPrompts.SelectionMode = DataGridViewSelectionMode.FullRowSelect;
             dgvPrompts.Size = new Size(980, 578);
             dgvPrompts.TabIndex = 6;
-            dgvPrompts.RowHeadersVisible = true;
-            dgvPrompts.RowHeadersWidth = 50;
             dgvPrompts.RowPostPaint += dgvPrompts_RowPostPaint;
             // 
             // colImage
@@ -224,6 +234,7 @@ namespace iviewer
             // 
             // tabPagePerPrompt
             // 
+            tabPagePerPrompt.Controls.Add(btnPlay2x);
             tabPagePerPrompt.Controls.Add(btnPreview);
             tabPagePerPrompt.Controls.Add(btnImport);
             tabPagePerPrompt.Controls.Add(btnPlayAll);
@@ -238,7 +249,7 @@ namespace iviewer
             // btnPreview
             // 
             btnPreview.Anchor = AnchorStyles.Top | AnchorStyles.Right;
-            btnPreview.Location = new Point(886, 6);
+            btnPreview.Location = new Point(886, 93);
             btnPreview.Name = "btnPreview";
             btnPreview.Size = new Size(100, 23);
             btnPreview.TabIndex = 8;
@@ -249,7 +260,7 @@ namespace iviewer
             // btnImport
             // 
             btnImport.Anchor = AnchorStyles.Top | AnchorStyles.Right;
-            btnImport.Location = new Point(780, 6);
+            btnImport.Location = new Point(886, 64);
             btnImport.Name = "btnImport";
             btnImport.Size = new Size(100, 23);
             btnImport.TabIndex = 7;
@@ -260,7 +271,7 @@ namespace iviewer
             // btnPlayAll
             // 
             btnPlayAll.Anchor = AnchorStyles.Top | AnchorStyles.Right;
-            btnPlayAll.Location = new Point(674, 6);
+            btnPlayAll.Location = new Point(884, 6);
             btnPlayAll.Name = "btnPlayAll";
             btnPlayAll.Size = new Size(100, 23);
             btnPlayAll.TabIndex = 6;
@@ -289,15 +300,16 @@ namespace iviewer
             btnExport.UseVisualStyleBackColor = true;
             btnExport.Click += btnExport_Click;
             // 
-            // btnDeleteImage
+            // btnPlay2x
             // 
-            btnDeleteImage.Location = new Point(289, 6);
-            btnDeleteImage.Name = "btnDeleteImage";
-            btnDeleteImage.Size = new Size(105, 23);
-            btnDeleteImage.TabIndex = 9;
-            btnDeleteImage.Text = "- Delete Image";
-            btnDeleteImage.UseVisualStyleBackColor = true;
-            btnDeleteImage.Click += btnDeleteImage_Click;
+            btnPlay2x.Anchor = AnchorStyles.Top | AnchorStyles.Right;
+            btnPlay2x.Location = new Point(884, 35);
+            btnPlay2x.Name = "btnPlay2x";
+            btnPlay2x.Size = new Size(100, 23);
+            btnPlay2x.TabIndex = 9;
+            btnPlay2x.Text = "Play 2x";
+            btnPlay2x.UseVisualStyleBackColor = true;
+            btnPlay2x.Click += btnPlay2x_Click;
             // 
             // VideoGenerator
             // 
@@ -421,7 +433,7 @@ namespace iviewer
             // videoPlayerPerPrompt
             // 
             videoPlayerPerPrompt.Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right | AnchorStyles.Bottom;
-            videoPlayerPerPrompt.Location = new Point(3, 35); // Start below the button row
+            videoPlayerPerPrompt.Location = new Point(3, 3);
             videoPlayerPerPrompt.Name = "videoPlayerPerPrompt";
             videoPlayerPerPrompt.Size = new Size(986, 400);
             videoPlayerPerPrompt.TabIndex = 0;
@@ -436,7 +448,14 @@ namespace iviewer
         {
             StartPlayAllSequence();
         }
+
+        private void btnPlay2x_Click(object sender, EventArgs e)
+        {
+            StartPlayAllSequence(2);
+        }
+
         private Button btnExport;
         private Button btnDeleteImage;
+        private Button btnPlay2x;
     }
 }
