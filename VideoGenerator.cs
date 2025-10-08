@@ -53,15 +53,14 @@ namespace iviewer
 
             _config = new VideoGenerationConfig();
             _generationService = new VideoGenerationService(_config);
-            _exportService = new VideoExportService(_config);
             _metadataService = new VideoMetadataService();
             _fileService = new FileManagementService(_config);
-            _uiService = new UIUpdateService();
 
             //InitializeGrid(videoGenerationStatePK == null);
             InitializeGrid();
             SetupEventHandlers();
             InitializeVideoPlayers();
+            UpdateClipStates();
         }
 
         private void SetupEventHandlers()
@@ -109,11 +108,13 @@ namespace iviewer
                 insertIndex = dgvPrompts.Rows.Count; // Add at end if no selection
             }
 
-            // Insert new row in grid
-            dgvPrompts.Rows.Insert(insertIndex);
+            UpdateClipStates();
 
             var clipGenerationState = ClipGenerationState.New();
             clipGenerationState.Prompt = GetDefaultOrPreviousPrompt();
+
+            // Insert new row in grid
+            dgvPrompts.Rows.Insert(insertIndex);
 
             dgvPrompts.Rows[insertIndex].Tag = clipGenerationState;
             PopulateGridRow(insertIndex);
