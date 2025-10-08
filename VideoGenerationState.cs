@@ -23,6 +23,7 @@ namespace iviewer
             var state = new VideoGenerationState();
             if (state.LoadFromSql(sql))
             {
+                state.clipGenerationStates?.Clear();
                 return state;
             }
 
@@ -126,7 +127,6 @@ namespace iviewer
 
         #region Clips
 
-        // TODO: remove this list. Store ClipGenerationState in VideoRowData.
         public List<ClipGenerationState> ClipGenerationStates
         {
             get
@@ -149,10 +149,16 @@ namespace iviewer
                     clipGenerationStates = list;
                 }
 
-                return clipGenerationStates;
+                // We need to explicitly return the ordered list as OrderIndexes may have been changed since the collection was loaded.
+                return clipGenerationStates.OrderBy(l => l.OrderIndex).ToList();
             }
         }
         List<ClipGenerationState> clipGenerationStates;
+
+        public void ResetClips()
+        {
+            clipGenerationStates = null;
+        }
 
         #endregion
 

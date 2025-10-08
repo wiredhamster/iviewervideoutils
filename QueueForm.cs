@@ -27,7 +27,7 @@ namespace iviewer.Video
             LoadClips();
 
             // Subscribe to events
-            EventBus.ClipQueued += OnClipQueued;
+            //EventBus.ClipQueued += OnClipQueued;
             EventBus.ClipStatusChanged += OnClipStatusChanged;
             EventBus.ClipDeleted += OnClipDeleted;
             EventBus.VideoStatusChanged += OnVideoStatusChanged;
@@ -316,26 +316,66 @@ ORDER BY v.CreatedDate, c.OrderIndex";
 
         #region Data Refresh
 
-        private void OnClipQueued(Guid clipPK)
+        //private void OnClipQueued(Guid clipPK)
+        //{
+        //    if (InvokeRequired)
+        //    {
+        //        Invoke(new Action<Guid>(OnClipQueued), clipPK);
+        //        return;
+        //    }
+
+        //    var clip = ClipGenerationState.Load(clipPK);
+        //    if (clip != null)
+        //    {
+        //        var found = false;
+
+        //        for (var i = 0; i < dgvClips.Rows.Count; i++)
+        //        {
+        //            if (((Guid)dgvClips.Rows[i].Tag) == clipPK)
+        //            {
+        //                found = true;
+        //                dgvClips.Rows[i].Cells["Status"].Value = clip.Status;
+
+        //                break;
+        //            }
+        //        }
+
+        //        if (!found)
+        //        {
+        //            CreateClipRow(clip);
+        //        }
+
+        //        UpdateVideoState(clip.VideoGenerationStatePK);
+        //        UpdateVideoRowState(clip.VideoGenerationStatePK);
+        //    }
+        //    else
+        //    {
+        //        // Time for a refresh
+        //        LoadVideos();
+        //        LoadClips();
+        //    }
+        //}
+
+        private void OnClipStatusChanged(Guid clipPK, Guid videoPK, string newStatus)
         {
             if (InvokeRequired)
             {
-                Invoke(new Action<Guid>(OnClipQueued), clipPK);
+                Invoke(new Action<Guid, Guid, string>(OnClipStatusChanged), clipPK, newStatus);
                 return;
             }
 
+            // Update status in dgvClips (find row by PK, update Status cell)
+            var found = false;
             var clip = ClipGenerationState.Load(clipPK);
             if (clip != null)
             {
-                var found = false;
 
-                for (var i = 0; i < dgvClips.Rows.Count; i++)
+                foreach (DataGridViewRow row in dgvClips.Rows)
                 {
-                    if (((Guid)dgvClips.Rows[i].Tag) == clipPK)
+                    if ((Guid)row.Tag == clipPK) // Assuming Tag = PK
                     {
+                        row.Cells["Status"].Value = newStatus;
                         found = true;
-                        dgvClips.Rows[i].Cells["Status"].Value = clip.Status;
-
                         break;
                     }
                 }
@@ -354,28 +394,6 @@ ORDER BY v.CreatedDate, c.OrderIndex";
                 LoadVideos();
                 LoadClips();
             }
-        }
-
-        private void OnClipStatusChanged(Guid clipPK, Guid videoPK, string newStatus)
-        {
-            if (InvokeRequired)
-            {
-                Invoke(new Action<Guid, Guid, string>(OnClipStatusChanged), clipPK, newStatus);
-                return;
-            }
-
-            // Update status in dgvClips (find row by PK, update Status cell)
-            foreach (DataGridViewRow row in dgvClips.Rows)
-            {
-                if ((Guid)row.Tag == clipPK) // Assuming Tag = PK
-                {
-                    row.Cells["Status"].Value = newStatus;
-                    break;
-                }
-            }
-
-            UpdateVideoState(videoPK);
-            //UpdateVideoRowState(videoPK);
         }
 
         private void OnClipDeleted(Guid clipPK, Guid videoPK)
@@ -473,7 +491,7 @@ ORDER BY v.CreatedDate, c.OrderIndex";
         protected override void OnFormClosing(FormClosingEventArgs e)
         {
             // Unsubscribe to avoid leaks
-            EventBus.ClipQueued -= OnClipQueued;
+            //EventBus.ClipQueued -= OnClipQueued;
             EventBus.ClipStatusChanged -= OnClipStatusChanged;
             EventBus.ClipDeleted -= OnClipDeleted;
             EventBus.VideoStatusChanged -= OnVideoStatusChanged;

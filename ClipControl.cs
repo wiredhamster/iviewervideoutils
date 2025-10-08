@@ -90,10 +90,10 @@ namespace iviewer.Video
             else
             {
                 btnClip.Enabled = false;
-                txtSpeed.Visible = false;
-                lblSpeed.Visible = false;
-                cboEffect.Visible = false;
-                lblEffect.Visible = false;
+                txtSpeed.Visible = true;
+                lblSpeed.Visible = true;
+                cboEffect.Visible = true;
+                lblEffect.Visible = true;
                 txtAddFrames.Visible = false;
                 lblAdd.Visible = false;
                 txtDropFrames.Visible = false;

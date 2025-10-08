@@ -8,16 +8,16 @@ namespace iviewer
 {
     public static class EventBus
     {
-        public static event Action<Guid> ClipQueued; // Param: new Clip PK
+        //public static event Action<Guid> ClipQueued; // Param: new Clip PK
         public static event Action<Guid, Guid> ClipDeleted; // Param: Clip PK, Video PK
         public static event Action<Guid, Guid, string> ClipStatusChanged; // Params: Clip PK, Video PK, new Status (e.g., "Generating", "Generated")
         public static event Action<Guid, string> VideoStatusChanged; // Params: Video PK, new Status
         public static event Action<Guid, HashSet<Guid>> VideoDeleted; // Param: Video PK, Clip PKs
 
-        public static void RaiseClipQueued(Guid clipPK)
-        {
-            ClipQueued?.Invoke(clipPK);
-        }
+        //public static void RaiseClipQueued(Guid clipPK)
+        //{
+        //    ClipQueued?.Invoke(clipPK);
+        //}
 
         public static void RaiseClipDeleted(Guid clipPK, Guid videoPK)
         {

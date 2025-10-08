@@ -158,6 +158,76 @@ namespace iviewer
         }
         int orderIndex;
 
+        public string TransitionType
+        {
+            get => transitionType;
+            set
+            {
+                if (transitionType != value)
+                {
+                    transitionType = value;
+                    SetHasChanges();
+                }
+            }
+        }
+        string transitionType;
+
+        public double TransitionDuration 
+        {
+            get => transitionDuration;
+            set
+            {
+                if (transitionDuration != value)
+                {
+                    transitionDuration = value;
+                    SetHasChanges();
+                }
+            }
+        }
+        double transitionDuration;
+
+        public int TransitionDropFrames 
+        {
+            get => transitionDropFrames;
+            set
+            {
+                if (transitionDropFrames != value)
+                {
+                    transitionDropFrames = value;
+                    SetHasChanges();
+                }
+            }
+        }
+        int transitionDropFrames;
+
+        public int TransitionAddFrames 
+        {
+            get => transitionAddFrames;
+            set
+            {
+                if (transitionAddFrames != value)
+                {
+                    transitionAddFrames = value;
+                    SetHasChanges();
+                }
+            }
+        }
+        public int transitionAddFrames;
+
+        public double ClipSpeed 
+        {
+            get => clipSpeed;
+            set
+            {
+                if (clipSpeed != value)
+                {
+                    clipSpeed = value;
+                    SetHasChanges();
+                }
+            }
+        }
+        double clipSpeed;
+
         #endregion
 
         #region Loading / Saving
@@ -173,6 +243,11 @@ namespace iviewer
             Status = dic["Status"].ToString();
             OrderIndex = int.Parse(dic["OrderIndex"].ToString());
             VideoGenerationStatePK = Guid.Parse(dic["VideoGenerationStatePK"].ToString());
+            TransitionType = dic["TransitionType"].ToString();
+            TransitionDuration = double.Parse(dic["TransitionDuration"].ToString());
+            TransitionDropFrames = int.Parse(dic["TransitionDropFrames"].ToString());
+            TransitionAddFrames = int.Parse(dic["TransitionAddFrames"].ToString());
+            ClipSpeed = double.Parse(dic["ClipSpeed"].ToString());
         }
 
         protected override Dictionary<string, object> FillDictionary()
@@ -186,6 +261,11 @@ namespace iviewer
             dic["Status"] = Status;
             dic["OrderIndex"] = OrderIndex;
             dic["VideoGenerationStatePK"] = VideoGenerationStatePK;
+            dic["TransitionType"] = TransitionType;
+            dic["TransitionDuration"] = TransitionDuration;
+            dic["TransitionDropFrames"] = TransitionDropFrames;
+            dic["TransitionAddFrames"] = TransitionAddFrames;
+            dic["ClipSpeed"] = ClipSpeed;
 
             return dic;
         }
@@ -199,6 +279,11 @@ namespace iviewer
             Prompt = string.Empty;
             WorkflowPath = string.Empty;
             WorkflowJson = string.Empty;
+            TransitionType = "Interpolate";
+            TransitionDuration = 0;
+            TransitionDropFrames = 4;
+            TransitionAddFrames = 4;
+            ClipSpeed = 1;
         }
 
         #endregion

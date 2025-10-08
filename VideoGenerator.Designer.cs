@@ -36,6 +36,8 @@ namespace iviewer
             DataGridViewCellStyle dataGridViewCellStyle1 = new DataGridViewCellStyle();
             tabControl = new TabControl();
             tabPageGeneration = new TabPage();
+            btnMoveDown = new Button();
+            btnMoveUp = new Button();
             btnDeleteImage = new Button();
             lblProgress = new Label();
             pbProgress = new ProgressBar();
@@ -50,12 +52,12 @@ namespace iviewer
             btnAddRow = new Button();
             lblResolution = new Label();
             tabPagePerPrompt = new TabPage();
+            btnPlay2x = new Button();
             btnPreview = new Button();
             btnImport = new Button();
             btnPlayAll = new Button();
             tabPageFullVideo = new TabPage();
             btnExport = new Button();
-            btnPlay2x = new Button();
             tabControl.SuspendLayout();
             tabPageGeneration.SuspendLayout();
             ((System.ComponentModel.ISupportInitialize)dgvPrompts).BeginInit();
@@ -77,6 +79,8 @@ namespace iviewer
             // 
             // tabPageGeneration
             // 
+            tabPageGeneration.Controls.Add(btnMoveDown);
+            tabPageGeneration.Controls.Add(btnMoveUp);
             tabPageGeneration.Controls.Add(btnDeleteImage);
             tabPageGeneration.Controls.Add(lblProgress);
             tabPageGeneration.Controls.Add(pbProgress);
@@ -93,6 +97,26 @@ namespace iviewer
             tabPageGeneration.TabIndex = 0;
             tabPageGeneration.Text = "Generation";
             tabPageGeneration.UseVisualStyleBackColor = true;
+            // 
+            // btnMoveDown
+            // 
+            btnMoveDown.Location = new Point(490, 6);
+            btnMoveDown.Name = "btnMoveDown";
+            btnMoveDown.Size = new Size(84, 23);
+            btnMoveDown.TabIndex = 11;
+            btnMoveDown.Text = "Move Down";
+            btnMoveDown.UseVisualStyleBackColor = true;
+            btnMoveDown.Click += btnMoveDown_Click;
+            // 
+            // btnMoveUp
+            // 
+            btnMoveUp.Location = new Point(400, 6);
+            btnMoveUp.Name = "btnMoveUp";
+            btnMoveUp.Size = new Size(84, 23);
+            btnMoveUp.TabIndex = 10;
+            btnMoveUp.Text = "Move Up";
+            btnMoveUp.UseVisualStyleBackColor = true;
+            btnMoveUp.Click += btnMoveUp_Click;
             // 
             // btnDeleteImage
             // 
@@ -246,6 +270,17 @@ namespace iviewer
             tabPagePerPrompt.Text = "Per-Prompt Videos";
             tabPagePerPrompt.UseVisualStyleBackColor = true;
             // 
+            // btnPlay2x
+            // 
+            btnPlay2x.Anchor = AnchorStyles.Top | AnchorStyles.Right;
+            btnPlay2x.Location = new Point(884, 35);
+            btnPlay2x.Name = "btnPlay2x";
+            btnPlay2x.Size = new Size(100, 23);
+            btnPlay2x.TabIndex = 9;
+            btnPlay2x.Text = "Play 2x";
+            btnPlay2x.UseVisualStyleBackColor = true;
+            btnPlay2x.Click += btnPlay2x_Click;
+            // 
             // btnPreview
             // 
             btnPreview.Anchor = AnchorStyles.Top | AnchorStyles.Right;
@@ -299,17 +334,6 @@ namespace iviewer
             btnExport.Text = "Export";
             btnExport.UseVisualStyleBackColor = true;
             btnExport.Click += btnExport_Click;
-            // 
-            // btnPlay2x
-            // 
-            btnPlay2x.Anchor = AnchorStyles.Top | AnchorStyles.Right;
-            btnPlay2x.Location = new Point(884, 35);
-            btnPlay2x.Name = "btnPlay2x";
-            btnPlay2x.Size = new Size(100, 23);
-            btnPlay2x.TabIndex = 9;
-            btnPlay2x.Text = "Play 2x";
-            btnPlay2x.UseVisualStyleBackColor = true;
-            btnPlay2x.Click += btnPlay2x_Click;
             // 
             // VideoGenerator
             // 
@@ -399,6 +423,16 @@ namespace iviewer
             OnDeleteImage();
         }
 
+        private void btnMoveUp_Click(object sender, EventArgs e)
+        {
+            OnMoveUp();
+        }
+
+        private void btnMoveDown_Click(object sender, EventArgs e)
+        {
+            OnMoveDown();
+        }
+
         private void dgvPrompts_RowPostPaint(object sender, DataGridViewRowPostPaintEventArgs e)
         {
             var grid = sender as DataGridView;
@@ -457,5 +491,7 @@ namespace iviewer
         private Button btnExport;
         private Button btnDeleteImage;
         private Button btnPlay2x;
+        private Button btnMoveDown;
+        private Button btnMoveUp;
     }
 }

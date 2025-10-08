@@ -14,7 +14,7 @@ using System.Threading.Tasks;
 
 namespace iviewer
 {
-	public class VideoUtils
+	internal class VideoUtils
 	{
 		public static void ConfigureGlobalFFOptions()
 		{
@@ -434,14 +434,14 @@ namespace iviewer
         }
 
         public static async Task<bool> StitchVideosWithTransitionsAsync(
-            List<VideoRowData> rowDatas,
+            IEnumerable<ClipGenerationState> rowStates,
             string outputPath,
             bool deleteIntermediateFiles = true,
             bool highQuality = true)
         {
             try
             {
-                var validRows = rowDatas.Where(r => !string.IsNullOrEmpty(r.VideoPath) && File.Exists(r.VideoPath));
+                var validRows = rowStates.Where(r => !string.IsNullOrEmpty(r.VideoPath) && File.Exists(r.VideoPath));
                 if (!validRows.Any())
                 {
                     return false;
@@ -471,8 +471,9 @@ namespace iviewer
                     Directory.CreateDirectory(outputDir);
 
                 // Optimization: If all durations=0 and specs match, use demuxer
-                // TODO: This will crash if any video files are not valid.
-                bool allZero = validRows.All(r => r.JunctionParameters.Type == TransitionType.None || (r.JunctionParameters.Type == TransitionType.Fade && r.JunctionParameters.DurationSeconds == 0.0));
+                bool allZero = validRows.All(r => r.TransitionType.Equals("None", StringComparison.OrdinalIgnoreCase) 
+                    || (r.TransitionType.Equals("Fade", StringComparison.OrdinalIgnoreCase) && r.TransitionDuration == 0.0));
+
                 var mediaInfos = await Task.WhenAll(adjustedPaths.Select(p => FFProbe.AnalyseAsync(p)));
                 bool sameSpecs = mediaInfos.All(info =>
                     info.PrimaryVideoStream.Width == mediaInfos[0].PrimaryVideoStream.Width &&
@@ -486,7 +487,7 @@ namespace iviewer
                 }
                 else
                 {
-                    success = await StitchVideos(adjustedPaths, outputPath, validRows.Select(r => r.JunctionParameters).ToList());
+                    success = await StitchVideos(validRows.ToList(), outputPath);
                 }
 
                 // Cleanup temps
@@ -706,49 +707,25 @@ namespace iviewer
             }
         }
 
-
-        // Enum for transition types
-        public enum TransitionType
-        {
-            None,
-            Interpolate,
-            Fade
-        }
-
-        // Record for junction parameters (immutable, simple)
-        public record JunctionParameters(
-            TransitionType Type,
-            double DurationSeconds = 0.0, // For Fade (overlap duration) or Interpolate (blend duration)
-            int DropFrames = 0,           // For Interpolate: frames to drop from end of prev clip
-            int InterpFrames = 0         // For Interpolate: number of interp frames to generate
-        );
-
         private static async Task<bool> StitchVideos(
-            List<string> inputVideoPaths,
-            string outputPath,
-            List<JunctionParameters> junctions)
+            List<ClipGenerationState> clipStates,
+            string outputPath)
         {
-            if (junctions.Count < inputVideoPaths.Count - 1)
-            {
-                throw new ArgumentException("Junctions list must match the number of stitch points (inputs - 1)");
-            }
-
             try
             {
                 var tempFiles = new List<string>(); // For cleanup
                 var segments = new List<string>();  // Build list of processed segments
 
-                for (int i = 0; i < inputVideoPaths.Count; i++)
+                for (int i = 0; i < clipStates.Count; i++)
                 {
-                    string currentClip = inputVideoPaths[i];
-                    string processedClip = await ProcessClipForJunction(currentClip, i < junctions.Count ? junctions[i] : null, tempFiles);
+                    var currentState = clipStates[i];
+                    string processedClip = await ProcessClipForJunction(currentState, tempFiles);
                     segments.Add(processedClip);
 
                     // If not last clip, add transition segment based on junction
-                    if (i < inputVideoPaths.Count - 1)
+                    if (i < clipStates.Count - 1)
                     {
-                        var junction = junctions[i];
-                        string transitionSegment = await GenerateTransitionSegment(processedClip, inputVideoPaths[i + 1], junction, tempFiles);
+                        string transitionSegment = await GenerateTransitionSegment(processedClip, clipStates[i + 1].VideoPath, currentState, tempFiles);
                         if (!string.IsNullOrEmpty(transitionSegment))
                         {
                             segments.Add(transitionSegment);
@@ -757,10 +734,8 @@ namespace iviewer
                 }
 
                 // Probe to get duration and frame count
-                var mediaInfo = await FFProbe.AnalyseAsync(inputVideoPaths[0]);
-                //double durationSec = mediaInfo.Duration.TotalSeconds;
+                var mediaInfo = await FFProbe.AnalyseAsync(clipStates[0].VideoPath);
                 double inputFps = mediaInfo.PrimaryVideoStream.FrameRate;
-                //int totalFrames = (int)(durationSec * inputFps) + 1;
 
                 // Create temp concat list file
                 string listFile = Path.GetTempFileName();
@@ -796,11 +771,6 @@ namespace iviewer
                 // Cleanup list file
                 File.Delete(listFile);
 
-                //mediaInfo = await FFProbe.AnalyseAsync(outputPath);
-                //durationSec = mediaInfo.Duration.TotalSeconds;
-                //inputFps = mediaInfo.PrimaryVideoStream.FrameRate;
-                //totalFrames = (int)(durationSec * inputFps) + 1;
-
                 return result;
             }
             catch (Exception ex)
@@ -811,31 +781,31 @@ namespace iviewer
         }
 
         // Helper: Process (trim) clip based on next junction (e.g., drop frames for Interpolate)
-        private static async Task<string> ProcessClipForJunction(string clipPath, JunctionParameters? nextJunction, List<string> tempFiles)
+        private static async Task<string> ProcessClipForJunction(ClipGenerationState clipState, List<string> tempFiles)
         {
-            if (nextJunction == null || nextJunction.Type != TransitionType.Interpolate || nextJunction.DropFrames <= 0)
+            if (!clipState.TransitionType.Equals("Interpolate") || clipState.TransitionDropFrames <= 0)
             {
-                return clipPath; // No processing needed
+                return clipState.VideoPath; // No processing needed
             }
 
             // Probe to get duration and frame count
-            var mediaInfo = await FFProbe.AnalyseAsync(clipPath);
+            var mediaInfo = await FFProbe.AnalyseAsync(clipState.VideoPath);
             double durationSec = mediaInfo.Duration.TotalSeconds;
             double inputFps = mediaInfo.PrimaryVideoStream.FrameRate;
             int totalFrames = (int)(durationSec * inputFps) + 1;
 
-            if (nextJunction.DropFrames >= totalFrames)
+            if (clipState.TransitionDropFrames >= totalFrames)
             {
-                throw new ArgumentException($"Drop frames exceed total frames for clip: {clipPath}");
+                throw new ArgumentException($"Drop frames exceed total frames for clip: {clipState.VideoPath}");
             }
 
             // Calculate trim duration
-            double trimDurationSec = durationSec - (nextJunction.DropFrames / inputFps);
+            double trimDurationSec = durationSec - (clipState.TransitionDropFrames / inputFps);
 
             // Trim to temp file
             string trimmedClip = Path.Combine(Path.GetTempPath(), $"trimmed_{Guid.NewGuid()}.mp4");
             var trimArgs = FFMpegArguments
-                .FromFileInput(clipPath)
+                .FromFileInput(clipState.VideoPath)
                 .OutputToFile(trimmedClip, true, options =>
                 {
                     options.WithCustomArgument($"-t {trimDurationSec}");
@@ -853,10 +823,10 @@ namespace iviewer
         private static async Task<string> GenerateTransitionSegment(
             string prevClip,
             string nextClip,
-            JunctionParameters junction,
+            ClipGenerationState clipState,
             List<string> tempFiles)
         {
-            if (junction.Type == TransitionType.None)
+            if (clipState.TransitionType.Equals("None", StringComparison.OrdinalIgnoreCase))
             {
                 return string.Empty; // No segment
             }
@@ -869,94 +839,26 @@ namespace iviewer
 
             string transitionClip = Path.Combine(Path.GetTempPath(), $"transition_{Guid.NewGuid()}.mp4");
 
-            if (junction.Type == TransitionType.Fade)
+            if (clipState.TransitionType.Equals("Fade", StringComparison.OrdinalIgnoreCase))
             {
                 // Use xfade to create a short transition segment
-                double offset = junction.DurationSeconds; // Assuming prev end overlaps with next start
+                double offset = clipState.TransitionDuration; // Assuming prev end overlaps with next start
                 var fadeArgs = FFMpegArguments
                     .FromFileInput(prevClip)
                     .AddFileInput(nextClip)
                     .OutputToFile(transitionClip, true, options =>
                     {
-                        options.WithCustomArgument($"-filter_complex \"[0:v][1:v]xfade=transition=fade:duration={junction.DurationSeconds}:offset={offset},settb=1/1000000\"");
+                        options.WithCustomArgument($"-filter_complex \"[0:v][1:v]xfade=transition=fade:duration={clipState.TransitionDuration}:offset={offset},settb=1/1000000\"");
                         options.WithVideoCodec("libx264");
                         options.WithCustomArgument("-an");
                         options.WithFramerate(inputFps);
-                        options.WithCustomArgument($"-t {junction.DurationSeconds * 2}"); // Approx length of transition
+                        options.WithCustomArgument($"-t {clipState.TransitionDuration * 2}"); // Approx length of transition
                     });
                 await fadeArgs.ProcessAsynchronously();
             }
-            else if (junction.Type == TransitionType.Interpolate)
+            else if (clipState.TransitionType.Equals("Interpolate", StringComparison.OrdinalIgnoreCase))
             {
-                //int numInterpFrames = junction.InterpFrames;
-                //if (numInterpFrames <= 0) return string.Empty;
-
-                //// Extract last frame of prev (post-trim)
-                //string lastFrame = ExtractLastFrame(prevClip, Path.GetDirectoryName(prevClip));
-                //tempFiles.Add(lastFrame);
-
-                //// Extract first frame of next
-                //string firstFrame = ExtractFirstFrame(nextClip, Path.GetDirectoryName(nextClip));
-                //tempFiles.Add(firstFrame);
-
-                //string fileListPath = Path.Combine(Path.GetDirectoryName(prevClip), $"filelist_{DateTime.Now.Ticks}.txt");
-
-                //var bridgeFps = Math.Max(0.1, 2 * (double)inputFps / (double)(numInterpFrames + 1)); // Avoid zero/negative; +1 for inclusive frames
-
-                //var fileListContent = new List<string>
-                //{
-                //    $"file '{lastFrame.Replace("\\", "/")}'",
-                //    $"file '{firstFrame.Replace("\\", "/")}'"
-
-                //};
-                //await File.WriteAllLinesAsync(fileListPath, fileListContent);
-
-                //tempFiles.Add(fileListPath);
-
-                //string bridgeVideo = Path.Combine(Path.GetTempPath(), $"bridge_{Guid.NewGuid()}.mp4");
-                //var numFrames = fileListContent.Count;
-
-                //var result = await FFMpegArguments
-                //    .FromFileInput(fileListPath, false, inputOptions =>
-                //    {
-                //        inputOptions.ForceFormat("concat");
-                //        inputOptions.WithCustomArgument("-safe 0");
-                //        // No input -framerate needed with -vf approach
-                //    })
-                //    .OutputToFile(bridgeVideo, true, options =>
-                //    {
-                //        options.WithVideoCodec("libx264");
-                //        options.WithConstantRateFactor(23);
-                //        options.WithCustomArgument($"-r {bridgeFps}"); // Reinforce output framerate
-                //        options.WithCustomArgument($"-vf \"setpts=N/{bridgeFps}/TB,fps={bridgeFps}\""); // Key fix: Custom -vf for retiming
-                //        options.WithCustomArgument("-pix_fmt yuv420p");
-                //        options.WithCustomArgument("-vframes " + numFrames); // Limit to exact frame count
-                //    })
-                //    .ProcessAsynchronously();
-
-                //mediaInfo = FFProbe.Analyse(bridgeVideo);
-
-                //tempFiles.Add(bridgeVideo);
-
-                //// Use minterpolate
-                //result = await FFMpegArguments
-                //    .FromFileInput(bridgeVideo)
-                //    .OutputToFile(transitionClip, true, options =>
-                //    {
-                //        options.WithCustomArgument("-v verbose");
-                //        options.WithCustomArgument($"-vf minterpolate=fps={inputFps}:mi_mode=mci:mc_mode=aobmc:vsbmc=1:scd=none");
-                //        options.WithVideoCodec("libx264");
-                //        options.WithConstantRateFactor(23);
-                //        options.WithCustomArgument("-pix_fmt yuv420p");
-                //        options.WithCustomArgument("-an");
-                //    })
-                //    .ProcessAsynchronously();
-
-                //mediaInfo = FFProbe.Analyse(transitionClip);
-
-                //tempFiles.Add(transitionClip);
-                // Updated routine (replace your current logic; assumes numInterpFrames >= 4, else return empty as before)
-                int numInterpFrames = junction.InterpFrames;
+                int numInterpFrames = clipState.TransitionAddFrames;
                 if (numInterpFrames < 4) return string.Empty; // minterpolate requires at least 4 input frames
 
                 // Get total frames for prev and next (approximate via duration * fps)

@@ -26,6 +26,7 @@ namespace iviewer.Services
         public void QueueClips(VideoGenerationState state)
         {
             state.Save();
+            state.ResetClips();
 
             foreach (var clip in state.ClipGenerationStates)
             {
@@ -34,7 +35,8 @@ namespace iviewer.Services
                     clip.Status = "Queued";
                     clip.Save();
 
-                    EventBus.RaiseClipQueued(clip.PK);
+                    //EventBus.RaiseClipQueued(clip.PK);
+                    EventBus.RaiseClipStatusChanged(clip.PK, clip.VideoGenerationStatePK, "Queued");
                 }
             }
 
@@ -274,23 +276,23 @@ namespace iviewer.Services
         }
     }
 
-    public class VideoMetadataService
+    internal class VideoMetadataService
     {
-        public VideoClipInfo ExtractClipInfo(VideoRowData rowData, string resolution, int rowIndex)
+        public VideoClipInfo ExtractClipInfo(ClipGenerationState clipState, string resolution, int rowIndex)
         {
             var info = new VideoClipInfo
             {
-                Path = rowData.VideoPath,
-                Prompt = rowData.Prompt,
+                Path = clipState.VideoPath,
+                Prompt = clipState.Prompt,
                 Resolution = resolution,
-                Duration = VideoUtils.GetVideoDuration(rowData.VideoPath),
+                Duration = VideoUtils.GetVideoDuration(clipState.VideoPath),
                 RowIndex = rowIndex,
-                Source = Path.GetFileNameWithoutExtension(rowData.ImagePath)
+                Source = Path.GetFileNameWithoutExtension(clipState.ImagePath)
             };
 
-            if (!string.IsNullOrEmpty(rowData.WorkflowJson))
+            if (!string.IsNullOrEmpty(clipState.WorkflowJson))
             {
-                PopulateFromWorkflow(info, rowData.WorkflowJson, rowData.Prompt);
+                PopulateFromWorkflow(info, clipState.WorkflowJson, clipState.Prompt);
             }
 
             return info;
@@ -657,22 +659,25 @@ namespace iviewer.Helpers
                 var startingWidth = 0;
                 var startingHeight = 0;
 
-                using (var startImg = System.Drawing.Image.FromFile(imagePath))
+                if (File.Exists(imagePath))
                 {
-                    startingWidth = startImg.Width;
-                    startingHeight = startImg.Height;
-                    aspectRatio = (double)startImg.Width / startImg.Height;
+                    using (var startImg = System.Drawing.Image.FromFile(imagePath))
+                    {
+                        startingWidth = startImg.Width;
+                        startingHeight = startImg.Height;
+                        aspectRatio = (double)startImg.Width / startImg.Height;
+                    }
+
+                    int targetPixels = 720 * 512;
+                    double sqrtPixels = Math.Sqrt(targetPixels * aspectRatio);
+
+                    int targetWidth = (int)Math.Ceiling(sqrtPixels / 16.0) * 16;
+                    int targetHeight = (int)Math.Ceiling((targetWidth / aspectRatio) / 16.0) * 16;
+
+                    Debug.Print($"Resolution: {startingWidth}x{startingHeight} => {targetWidth}x{targetHeight}");
+
+                    return (targetWidth, targetHeight);
                 }
-
-                int targetPixels = 720 * 512;
-                double sqrtPixels = Math.Sqrt(targetPixels * aspectRatio);
-
-                int targetWidth = (int)Math.Ceiling(sqrtPixels / 16.0) * 16;
-                int targetHeight = (int)Math.Ceiling((targetWidth / aspectRatio) / 16.0) * 16;
-
-                Debug.Print($"Resolution: {startingWidth}x{startingHeight} => {targetWidth}x{targetHeight}");
-
-                return (targetWidth, targetHeight);
             }
             catch (Exception ex)
             {
