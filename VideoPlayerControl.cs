@@ -3,6 +3,7 @@ using LibVLCSharp.WinForms;
 using System;
 using System.IO;
 using System.Windows.Forms;
+using static System.Windows.Forms.VisualStyles.VisualStyleElement;
 
 namespace iviewer
 {
@@ -88,6 +89,12 @@ namespace iviewer
 		{
 			try
 			{
+				if (InvokeRequired)
+				{
+                    Invoke(new Action(StopAndHide));
+                    return;
+                }
+
 				// My theory is that this hangs here if there is file contention due to failed deletes.
 				// I think we should move deleting temp files to the queue. And only raise an event to do it after closing the form.
 				if (mediaPlayer.IsPlaying)

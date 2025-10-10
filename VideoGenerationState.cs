@@ -133,7 +133,7 @@ namespace iviewer
             {
                 if (clipGenerationStates == null)
                 {
-                    var list = new List<ClipGenerationState>();
+                    clipGenerationStates = new List<ClipGenerationState>();
                     if (IsInDatabase)
                     {
                         var sql = $"SELECT c.* FROM ClipGenerationStates c WITH (NOLOCK) WHERE VideoGenerationStatePK = {DB.FormatDBValue(PK)} ORDER BY OrderIndex";
@@ -142,15 +142,16 @@ namespace iviewer
                         {
                             var clip = new ClipGenerationState();
                             clip.LoadFromRow(table.Rows[i]);
-                            list.Add(clip);
+                            clipGenerationStates.Add(clip);
                         }
-                    }
 
-                    clipGenerationStates = list;
+                        // Sort in-place once after loading (ensures order without recreating lists)
+                        clipGenerationStates.Sort((a, b) => a.OrderIndex.CompareTo(b.OrderIndex));
+                    }
                 }
 
-                // We need to explicitly return the ordered list as OrderIndexes may have been changed since the collection was loaded.
-                return clipGenerationStates.OrderBy(l => l.OrderIndex).ToList();
+                // Return the backing list without resorting into a new list.
+                return clipGenerationStates;
             }
         }
         List<ClipGenerationState> clipGenerationStates;

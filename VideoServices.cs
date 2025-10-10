@@ -79,8 +79,10 @@ namespace iviewer.Services
                 return "";
             }
 
+            clip.VideoPath = "";
+
             var thisClip = false;
-            foreach (var item in video.ClipGenerationStates)
+            foreach (var item in video.ClipGenerationStates.OrderBy(c => c.OrderIndex))
             {
                 if (thisClip)
                 {
@@ -113,6 +115,8 @@ namespace iviewer.Services
                 clip.WorkflowPath = selectedWorkflow;
                 clip.VideoPath = videoPath;
             }
+
+            clip.Save();
 
             return videoPath;
         }
@@ -259,6 +263,55 @@ namespace iviewer.Services
             return Path.GetFullPath(finalPath);
         }
 
+        internal async Task<string> StitchVideos(List<ClipGenerationState> clips, bool highQuality = true)
+        {
+            string previewFilename = $"preview_{DateTime.Now:yyyyMMdd_HHmmss}.mp4";
+            string previewPath = Path.Combine(_config.TempDir, previewFilename);
+
+            var success = await VideoUtils.StitchVideosWithTransitionsAsync(clips,
+                previewPath,
+                true,
+                highQuality);
+
+            if (success)
+            {
+                return previewPath;
+            }
+            else
+            {
+                return "";
+            }
+        }
+
+        internal async Task DeleteAndCleanUp(VideoGenerationState videoGenerationState)
+        {
+            videoGenerationState.Save();
+
+            var tempFiles = new List<string>();
+            foreach (var file in videoGenerationState.TempFiles.Split(','))
+            {
+                if (!string.IsNullOrEmpty(file))
+                {
+                    tempFiles.Add(file);
+                }
+            }
+
+            FileManagementService.CleanupTempFiles(tempFiles);
+
+            var clipPKs = new HashSet<Guid>();
+            var pk = videoGenerationState.PK;
+
+            if (videoGenerationState != null)
+            {
+                videoGenerationState.ClipGenerationStates.ForEach(c => clipPKs.Add(c.PK));
+
+                videoGenerationState.Delete();
+                videoGenerationState = null;
+            }
+
+            EventBus.RaiseVideoDeleted(pk, clipPKs);
+        }
+
         public void Dispose()
         {
             _httpClient?.Dispose();
@@ -278,15 +331,17 @@ namespace iviewer.Services
 
     internal class VideoMetadataService
     {
-        public VideoClipInfo ExtractClipInfo(ClipGenerationState clipState, string resolution, int rowIndex)
+        public VideoClipInfo ExtractClipInfo(ClipGenerationState clipState)
         {
+            var mediaInfo = FFProbe.Analyse(clipState.VideoPath);
+
             var info = new VideoClipInfo
             {
                 Path = clipState.VideoPath,
                 Prompt = clipState.Prompt,
-                Resolution = resolution,
-                Duration = VideoUtils.GetVideoDuration(clipState.VideoPath),
-                RowIndex = rowIndex,
+                Resolution = $"{mediaInfo.PrimaryVideoStream.Width}x{mediaInfo.PrimaryVideoStream.Height}",
+                Duration = mediaInfo.Duration.TotalSeconds,
+                RowIndex = clipState.OrderIndex,
                 Source = Path.GetFileNameWithoutExtension(clipState.ImagePath)
             };
 
@@ -465,7 +520,7 @@ namespace iviewer.Services
             Directory.CreateDirectory(_tempDir);
         }
 
-        public void CleanupTempFiles(List<string> tempFiles)
+        public static void CleanupTempFiles(List<string> tempFiles)
         {
             foreach (string file in tempFiles.Where(File.Exists))
             {

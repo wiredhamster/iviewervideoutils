@@ -192,7 +192,7 @@ ORDER BY v.CreatedDate, c.OrderIndex";
 SELECT TOP 1 c.PK, c.VideoGenerationStatePK 
 FROM ClipGenerationStates c
     JOIN VideoGenerationStates v ON c.VideoGenerationStatePK = v.PK
-WHERE c.Status = 'Queued' 
+WHERE c.Status = 'Queued' OR v.Status = 'Export'
 ORDER BY v.CreatedDate, c.OrderIndex";
                     var dt = DB.SelectSingle(sql);
                     if (!dt.ContainsKey("PK")) break;
@@ -203,39 +203,20 @@ ORDER BY v.CreatedDate, c.OrderIndex";
                     var video = VideoGenerationState.Load(videoPK);
                     var clipState = video.ClipGenerationStates.FirstOrDefault(c => c.PK == pk);
 
-                    video.Status = "Generating";
-                    clipState.Status = "Generating";
-                    video.Save();
-
-                    EventBus.RaiseVideoStatusChanged(videoPK, video.Status);
-                    EventBus.RaiseClipStatusChanged(pk, videoPK, "Generating");
-
-                    string result = await _generationService.GenerateVideoAsync(clipState);
-
-                    // On success:
-                    if (File.Exists(result))
+                    // Generate or Export
+                    if (video.Status == "Export")
                     {
-                        clipState.Status = "Generated";
-
-                        sql = $"SELECT TOP 1 * From ClipGenerationStates WHERE VideoGenerationStatePK = {DB.FormatDBValue(clipState.VideoGenerationStatePK)} AND OrderIndex = {DB.FormatDBValue(clipState.OrderIndex + 1)}";
-                        var nextClip = ClipGenerationState.Load(sql);
-                        if (nextClip != null && nextClip.ImagePath == "")
-                        {
-                            var lastFrame = VideoUtils.ExtractLastFrame(result, _config.TempDir, true);
-                            nextClip.ImagePath = lastFrame;
-                            nextClip.Save();
-
-                            EventBus.RaiseClipStatusChanged(pk, videoPK, nextClip.Status);
-                        }
+                        await ExportVideo(video);
+                    }
+                    else if (clipState.Status == "Queued")
+                    {
+                        await GenerateVideo(clipState, video);
                     }
                     else
                     {
-                        clipState.Status = "Failed";
+                        // What???
+                        throw new Exception("Why no clip or video?");
                     }
-
-                    clipState.Save();
-                    EventBus.RaiseClipStatusChanged(pk, videoPK, clipState.Status);
-                    UpdateVideoState(clipState.VideoGenerationStatePK);
 
                     if (cts.Token.IsCancellationRequested) break;
                 }
@@ -275,7 +256,7 @@ ORDER BY v.CreatedDate, c.OrderIndex";
                 {
                     video.Status = "Queued";
                 }
-                else if (video.ClipGenerationStates.Any(c => c.Status == "Generated"))
+                else if (video.ClipGenerationStates.Any(c => c.Status == "Generated") || video.ClipGenerationStates.Any(c => c.Status == "Requeue"))
                 {
                     video.Status = "Generated";
                 }
@@ -313,6 +294,158 @@ ORDER BY v.CreatedDate, c.OrderIndex";
             btnPause.Enabled = false;
             btnStart.Enabled = false;
         }
+
+        #region Generate Video
+
+        async Task GenerateVideo(ClipGenerationState clipState, VideoGenerationState video)
+        {
+            video.Status = "Generating";
+            clipState.Status = "Generating";
+            video.Save();
+
+            EventBus.RaiseVideoStatusChanged(video.PK, video.Status);
+            EventBus.RaiseClipStatusChanged(clipState.PK, video.PK, "Generating");
+
+            string result = await _generationService.GenerateVideoAsync(clipState);
+
+            // On success:
+            if (File.Exists(result))
+            {
+                clipState.Status = "Generated";
+
+                var sql = $"SELECT TOP 1 * From ClipGenerationStates WHERE VideoGenerationStatePK = {DB.FormatDBValue(clipState.VideoGenerationStatePK)} AND OrderIndex = {DB.FormatDBValue(clipState.OrderIndex + 1)}";
+                var nextClip = ClipGenerationState.Load(sql);
+                if (nextClip != null && nextClip.ImagePath == "")
+                {
+                    var lastFrame = VideoUtils.ExtractLastFrame(result, _config.TempDir, true);
+                    nextClip.ImagePath = lastFrame;
+                    nextClip.Save();
+
+                    EventBus.RaiseClipStatusChanged(clipState.PK, video.PK, nextClip.Status);
+                }
+            }
+            else
+            {
+                clipState.Status = "Failed";
+            }
+
+            clipState.Save();
+            EventBus.RaiseClipStatusChanged(clipState.PK, video.PK, clipState.Status);
+            UpdateVideoState(clipState.VideoGenerationStatePK);
+        }
+
+        #endregion
+
+        #region Export Video
+
+        async Task ExportVideo(VideoGenerationState videoGenerationState)
+        {
+            if (videoGenerationState.ClipGenerationStates.Any(c => c.Status == "Queued" || c.Status == "Generating"))
+            {
+                videoGenerationState.Status = "Failed";
+                videoGenerationState.Save();
+
+                EventBus.RaiseVideoStatusChanged(videoGenerationState.PK, "Failed");
+
+                return;
+            }
+
+            videoGenerationState.Status = "Exporting";
+            videoGenerationState.Save();
+
+            EventBus.RaiseVideoStatusChanged(videoGenerationState.PK, "Exporting");
+
+            var generationService = new VideoGenerationService(_config);
+
+            var clipsToExport = videoGenerationState.ClipGenerationStates.Where(c => !string.IsNullOrEmpty(c.VideoPath)).OrderBy(c => c.OrderIndex).ToList();
+
+            var path = await generationService.StitchVideos(clipsToExport, true);
+            videoGenerationState.TempFiles = videoGenerationState.TempFiles + "," + path;
+
+            try
+            {
+                if (string.IsNullOrEmpty(path))
+                {
+                    throw new Exception("Stitch failed");
+                }
+
+                string filename = DateTime.Now.ToString("yyyyMMdd-HHmmss");
+                string tempPath = Path.Combine(_config.TempDir, filename + ".mp4");
+                string exportPath = Path.Combine(
+                    _config.ExportDir,
+                    filename + ".mp4");
+                string metaPath = Path.Combine(
+                    Path.GetDirectoryName(exportPath) ?? "",
+                    filename + ".json");
+
+                // Ensure export directory exists
+                Directory.CreateDirectory(Path.GetDirectoryName(exportPath) ?? "");
+
+                // Apply upscaling and interpolation to the stitched video
+                bool success = await VideoUtils.UpscaleAndInterpolateVideoAsync(path, tempPath);
+
+                if (!success)
+                {
+                    throw new Exception("Video upscaling and interpolation failed");
+                }
+
+                // Export metadata
+                await ExportMetadataAsync(GenerateClipInfos(clipsToExport), metaPath);
+
+                // Copy to final location
+                File.Copy(tempPath, exportPath, overwrite: true);
+
+                // Cleanup temp file
+                File.Delete(tempPath);
+
+                videoGenerationState.Status = "Exported";
+                videoGenerationState.Save();
+
+                EventBus.RaiseVideoStatusChanged(videoGenerationState.PK, videoGenerationState.Status);
+
+                await generationService.DeleteAndCleanUp(videoGenerationState);
+            }
+            catch (Exception ex)
+            {
+                videoGenerationState.Status = "Failed";
+                videoGenerationState.Save();
+
+                EventBus.RaiseVideoStatusChanged(videoGenerationState.PK, videoGenerationState.Status);
+            }
+        }
+
+        private List<VideoClipInfo> GenerateClipInfos(List<ClipGenerationState> clipStates)
+        {
+            var clipInfos = new List<VideoClipInfo>();
+            var metadataService = new VideoMetadataService();
+
+            foreach (var clipState in clipStates)
+            {
+                if (File.Exists(clipState.VideoPath))
+                {
+                    var clipInfo = metadataService.ExtractClipInfo(clipState);
+                    clipInfos.Add(clipInfo);
+                }
+            }
+
+            return clipInfos;
+        }
+
+        private async Task ExportMetadataAsync(List<VideoClipInfo> clipInfos, string metaPath)
+        {
+            var jsonData = new
+            {
+                Source = Guid.NewGuid(),
+                ClipInfos = clipInfos,
+                // TODO: Export ClipGenerationStates. Or at least relevant info from them.
+                ExportTimestamp = DateTime.Now
+            };
+
+            string json = Newtonsoft.Json.JsonConvert.SerializeObject(jsonData, Newtonsoft.Json.Formatting.Indented);
+            await File.WriteAllTextAsync(metaPath, json);
+        }
+
+        #endregion
 
         #region Data Refresh
 

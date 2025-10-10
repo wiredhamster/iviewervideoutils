@@ -13,7 +13,6 @@ namespace iviewer
     {
         private readonly VideoGenerationConfig _config;
         private readonly VideoGenerationService _generationService;
-        private readonly VideoMetadataService _metadataService;
         private readonly FileManagementService _fileService;
 
         private Guid _videoGenerationStatePK;
@@ -25,7 +24,6 @@ namespace iviewer
 
         private List<VideoClipInfo> _clipInfos = new List<VideoClipInfo>();
         private string _previewVideoPath = null;
-        bool _highQualityPreview = false;
         private List<string> _tempFiles = new List<string>();
 
         private int _width = 0;
@@ -47,13 +45,13 @@ namespace iviewer
         public VideoGenerator(Guid? videoGenerationStatePK = null)
         {
             InitializeComponent();
+            this.StartPosition = FormStartPosition.CenterScreen;
 
             var pk = videoGenerationStatePK.HasValue && videoGenerationStatePK.Value != Guid.Empty ? videoGenerationStatePK.Value : Guid.NewGuid();
             _videoGenerationStatePK = pk;
 
             _config = new VideoGenerationConfig();
             _generationService = new VideoGenerationService(_config);
-            _metadataService = new VideoMetadataService();
             _fileService = new FileManagementService(_config);
 
             //InitializeGrid(videoGenerationStatePK == null);
@@ -71,6 +69,7 @@ namespace iviewer
             dgvPrompts.EditingControlShowing += OnGridEditingControlShowing;
 
             EventBus.ClipStatusChanged += OnClipStatusChanged;
+            EventBus.VideoStatusChanged += OnVideoStatusChanged;
 
             // Grid events for edit mode
             dgvPrompts.CellBeginEdit += (s, e) => _isEditing = true;
@@ -149,6 +148,9 @@ namespace iviewer
                 return;
             }
 
+            UpdateClipStateFromRow(rowIndex);
+            UpdateClipStateFromRow(rowIndex - 1);
+
             var clip1 = RowClipState(rowIndex);
             var clip2 = RowClipState(rowIndex - 1);
 
@@ -186,6 +188,9 @@ namespace iviewer
             {
                 return;
             }
+
+            UpdateClipStateFromRow(rowIndex);
+            UpdateClipStateFromRow(rowIndex + 1);
 
             var clip1 = RowClipState(rowIndex);
             var clip2 = RowClipState(rowIndex + 1);
@@ -395,11 +400,21 @@ namespace iviewer
 
                 var clip = RowClipState(rowIndex);
                 var pk = clip.PK;
-                _videoGenerationState.ClipGenerationStates.Remove(clip);
-                clip.Delete();
 
+                foreach (var videoClip in _videoGenerationState.ClipGenerationStates)
+                {
+                    if (videoClip.PK == pk)
+                    {
+                        _videoGenerationState.ClipGenerationStates.Remove(videoClip);
+                        break;
+                    }
+                }
+                
                 // Remove row
                 dgvPrompts.Rows.RemoveAt(rowIndex);
+
+                clip.Delete();
+                _videoGenerationState.Save();
 
                 EventBus.RaiseClipDeleted(pk, _videoGenerationStatePK);
 
@@ -414,7 +429,12 @@ namespace iviewer
 
             int rowIndex = dgvPrompts.SelectedRows[0].Index;
             dgvPrompts.Rows[rowIndex].Cells["colImage"].Value = null;
-            RowClipState(rowIndex).ImagePath = String.Empty;
+
+            var clip = RowClipState(rowIndex);
+            clip.ImagePath = String.Empty;
+            clip.Save();
+
+            EventBus.RaiseClipStatusChanged(clip.PK, clip.VideoGenerationStatePK, clip.Status);
         }
 
         private void ExtractLastFrameFromSelected()
@@ -749,11 +769,24 @@ namespace iviewer
 
             try
             {
-                await CreatePreview(false);
+                // TODO: need to test with both standard and high quality
+                _previewVideoPath = await _generationService.StitchVideos(GeneratedRows.ToList(), false);
 
-                // Switch to Full Video tab and load the preview
-                tabControl.SelectedIndex = 2; // Full Video tab
-                LoadVideoInPlayer(videoPlayerFull, _previewVideoPath, ref _fullStream);
+                if (!string.IsNullOrEmpty(_previewVideoPath))
+                {
+                    _videoGenerationState.PreviewPath = _previewVideoPath;
+                    _tempFiles.Add(_previewVideoPath); // Track for cleanup
+
+                    _videoGenerationState.Save();
+
+                    // Switch to Full Video tab and load the preview
+                    tabControl.SelectedIndex = 2; // Full Video tab
+                    LoadVideoInPlayer(videoPlayerFull, _previewVideoPath, ref _fullStream);
+                }
+                else
+                {
+                    MessageBox.Show("Failed to create preview video.");
+                }
             }
             catch (Exception ex)
             {
@@ -763,49 +796,6 @@ namespace iviewer
             {
                 SetPreviewButtonState(false, "Preview");
                 SetExportButtonState(false, "Export");
-            }
-        }
-
-        private async Task CreatePreview(bool highQuality = true)
-        {
-            string previewFilename = $"preview_{DateTime.Now:yyyyMMdd_HHmmss}.mp4";
-            string previewPath = Path.Combine(_fileService.TempDir, previewFilename);
-
-            // Create preview with transitions but without upscaling/interpolation
-            // TODO: Why not just pass the valid row datas.
-            //bool success = await VideoUtils.StitchVideosWithTransitionsAsync(
-            //    ValidVideoRows.Select(r => r.VideoPath).ToList<string>(),
-            //    previewPath,
-            //    TRANSITION_TYPE,
-            //    ValidVideoRows.Select(r => r.TransitionDuration).ToList<double>(),
-            //    ValidVideoRows.Select(r => r.ClipSpeed).ToList<double>(),
-            //    true,
-            //    highQuality);
-
-            //foreach (var state in GeneratedRows)
-            //{
-            //    var transitionType = row.TransitionType == "Interpolate" ? VideoUtils.TransitionType.Interpolate
-            //            : row.TransitionType == "Fade" ? VideoUtils.TransitionType.Fade
-            //            : VideoUtils.TransitionType.None;
-
-            //    var junctionParameters = new VideoUtils.JunctionParameters(transitionType, row.TransitionDuration, row.DropFrames, row.AddFrames);
-            //    row.JunctionParameters = junctionParameters;
-            //}
-
-            var success = await VideoUtils.StitchVideosWithTransitionsAsync(GeneratedRows,
-                previewPath,
-                true,
-                highQuality);
-
-            if (success)
-            {
-                _previewVideoPath = previewPath;
-                _highQualityPreview = highQuality;
-                _tempFiles.Add(previewPath); // Track for cleanup
-            }
-            else
-            {
-                MessageBox.Show("Failed to create preview video.");
             }
         }
 
@@ -822,89 +812,16 @@ namespace iviewer
 
         private async void OnExportClick()
         {
-            if (string.IsNullOrEmpty(_previewVideoPath) || !File.Exists(_previewVideoPath))
-            {
-                MessageBox.Show("No preview video available. Please create a preview first from the Per-Prompt Videos tab.");
-                return;
-            }
-
-            SetExportButtonState(true, "Exporting...");
-            _videoGenerationState.Status = "Exporting";
+            _videoGenerationState.Status = "Export";
             _videoGenerationState.Save();
 
             EventBus.RaiseVideoStatusChanged(_videoGenerationStatePK, _videoGenerationState.Status);
 
-            if (!_highQualityPreview)
-            {
-                await CreatePreview(true);
-            }
+            SetExportButtonState(true, "Queued");
 
-            try
-            {
-                string filename = DateTime.Now.ToString("yyyyMMdd-HHmmss");
-                string tempPath = Path.Combine(_fileService.TempDir, filename + ".mp4");
-                string exportPath = Path.Combine(
-                    _config.ExportDir,
-                    filename + ".mp4");
-                string metaPath = Path.Combine(
-                    Path.GetDirectoryName(exportPath) ?? "",
-                    filename + ".json");
+            QueryStartQueue();
 
-                // Ensure export directory exists
-                Directory.CreateDirectory(Path.GetDirectoryName(exportPath) ?? "");
-
-                // Apply upscaling and interpolation to the preview video
-                bool success = await VideoUtils.UpscaleAndInterpolateVideoAsync(_previewVideoPath, tempPath);
-
-                if (!success)
-                {
-                    throw new Exception("Video upscaling and interpolation failed");
-                }
-
-                // Export metadata
-                await ExportMetadataAsync(GenerateClipInfos(), metaPath);
-
-                // Copy to final location
-                File.Copy(tempPath, exportPath, overwrite: true);
-
-                // Cleanup temp file
-                File.Delete(tempPath);
-
-                _isExported = true;
-
-                SetExportButtonState(false, "Exported");
-                _videoGenerationState.Status = "Exported";
-                _videoGenerationState.Save();
-
-                EventBus.RaiseVideoStatusChanged(_videoGenerationStatePK, _videoGenerationState.Status);
-
-                MessageBox.Show($"Video exported successfully to: {exportPath}");
-            }
-            catch (Exception ex)
-            {
-                SetExportButtonState(false, "Export");
-
-                _videoGenerationState.Status = "Failed";
-                _videoGenerationState.Save();
-
-                EventBus.RaiseVideoStatusChanged(_videoGenerationStatePK, _videoGenerationState.Status);
-
-                MessageBox.Show($"Export failed: {ex.Message}");
-            }
-        }
-
-        private async Task ExportMetadataAsync(List<VideoClipInfo> clipInfos, string metaPath)
-        {
-            var jsonData = new
-            {
-                Source = Guid.NewGuid(),
-                ClipInfos = clipInfos,
-                // TODO: Export ClipGenerationStates. Or at least relevant info from them.
-                ExportTimestamp = DateTime.Now
-            };
-
-            string json = Newtonsoft.Json.JsonConvert.SerializeObject(jsonData, Newtonsoft.Json.Formatting.Indented);
-            await File.WriteAllTextAsync(metaPath, json);
+            Close();
         }
 
         private void ImportVideosForTesting()
@@ -952,31 +869,6 @@ namespace iviewer
                 UpdateUI();
                 MessageBox.Show($"{imported.Count} videos imported. Total videos: {VideoRows.Count()}");
             }
-        }
-
-        private List<VideoClipInfo> GenerateClipInfos()
-        {
-            var clipInfos = new List<VideoClipInfo>();
-
-            for (int i = 0; i < dgvPrompts.Rows.Count; i++)
-            {
-                if (File.Exists(RowClipState(i).VideoPath))
-                {
-                    var clipInfo = _metadataService.ExtractClipInfo(
-                        RowClipState(i),
-                        lblResolution.Text,
-                        i);
-
-                    if (clipInfo.Prompt == "Imported Video")
-                    {
-                        clipInfo.RowIndex = -1;
-                    }
-
-                    clipInfos.Add(clipInfo);
-                }
-            }
-
-            return clipInfos;
         }
 
         private void OnExportProgressUpdate(int percentage)
@@ -1090,6 +982,39 @@ namespace iviewer
 
         #region Data Refresh
 
+        private void OnVideoStatusChanged(Guid videoPK, string status)
+        {
+            if (videoPK != _videoGenerationStatePK)
+            {
+                return;
+            }
+
+            if (status == "Exported")
+            {
+                _isExported = true;
+            }
+
+            var exportButtonText = status;
+            var enabled = true;
+            if (status == "Export")
+            {
+                exportButtonText = "Queued";
+                enabled = false;
+            }
+            else if (status == "Queued" || status == "Generating" || status == "Generated")
+            {
+                exportButtonText = "Export";
+                enabled = false;
+            }
+            else if (status == "Generated")
+            {
+                exportButtonText = "Export";
+                enabled = true;
+            }
+
+            SetExportButtonState(enabled, exportButtonText);
+        }
+
         private void OnClipStatusChanged(Guid clipPK, Guid videoPK, string newStatus)
         {
             if (InvokeRequired)
@@ -1197,6 +1122,13 @@ namespace iviewer
 
                 dgvPrompts.Rows[rowIndex].Cells["colImage"].Value = ImageHelper.CreateThumbnail(thumbnailPath, null, 160);
                 RowClipState(rowIndex).ImagePath = thumbnailPath;
+
+                // Is there a metadata file? If so, we want to add it to temp files for deletion later.
+                var metadataFile = Path.Combine(Path.GetDirectoryName(ofd.FileName), Path.GetFileNameWithoutExtension(ofd.FileName) + ".txt");
+                if (File.Exists(metadataFile))
+                {
+                    _tempFiles.Add(metadataFile);
+                }
 
                 // If it was previously generated, mark for regeneration
                 if (wasGenerated)
@@ -1627,19 +1559,29 @@ namespace iviewer
             _videoGenerationState.PreviewPath = _previewVideoPath;
             _videoGenerationState.TempFiles = string.Join(",", _tempFiles);
 
-            for (int i = 0; i < dgvPrompts.Rows.Count; i++)
-            {
-                var clipState = RowClipState(i);
-
-                clipState.VideoGenerationStatePK = _videoGenerationStatePK;
-                clipState.Prompt = dgvPrompts.Rows[i].Cells["colPrompt"].Value?.ToString() ?? string.Empty;
-                clipState.Status = dgvPrompts.Rows[i].Cells["colQueue"].Value?.ToString() ?? string.Empty;
-                clipState.OrderIndex = i;
-
-                clipState.Save();
-            }
+            UpdateClipStatesFromRows();
 
             _videoGenerationState.Save();
+        }
+
+        void UpdateClipStatesFromRows()
+        {
+            for (int i = 0; i < dgvPrompts.Rows.Count; i++)
+            {
+                UpdateClipStateFromRow(i);
+            }
+        }
+
+        private void UpdateClipStateFromRow(int i)
+        {
+            var clipState = RowClipState(i);
+
+            clipState.VideoGenerationStatePK = _videoGenerationStatePK;
+            clipState.Prompt = dgvPrompts.Rows[i].Cells["colPrompt"].Value?.ToString() ?? string.Empty;
+            clipState.Status = dgvPrompts.Rows[i].Cells["colQueue"].Value?.ToString() ?? string.Empty;
+            clipState.OrderIndex = i;
+
+            clipState.Save();
         }
 
         public void LoadState(bool reloadRows = true)
@@ -1695,6 +1637,7 @@ namespace iviewer
             _perPromptStream?.Dispose();
 
             EventBus.ClipStatusChanged -= OnClipStatusChanged;
+            EventBus.VideoStatusChanged -= OnVideoStatusChanged;
 
             if (btnExport.Text == "Exporting...")
             {
@@ -1702,7 +1645,11 @@ namespace iviewer
                 return;
             }
 
-            if (_videoGenerationState != null && _videoGenerationState.ClipGenerationStates.Any(c => c.Status == "Queued" || c.Status == "Generating"))
+            if (_videoGenerationState.Status == "Export" || _videoGenerationState.Status == "Exporting")
+            {
+                // Just close without saving.
+            }
+            else if (_videoGenerationState.ClipGenerationStates.Any(c => c.Status == "Queued" || c.Status == "Generating"))
             {
                 // Video is in the queue. Close without confirmation.
                 // TODO: Not sure this works for RowData.
@@ -1711,47 +1658,10 @@ namespace iviewer
             }
             else
             {
-                var action = _isExported ? DialogResult.Yes : MessageBox.Show("Discard?", "Video Generator", MessageBoxButtons.YesNoCancel);
+                var action = MessageBox.Show("Discard?", "Video Generator", MessageBoxButtons.YesNoCancel);
                 if (action == DialogResult.Yes)
                 {
-                    _videoGenerationState.Save();
-
-                    _fileService.CleanupTempFiles(_tempFiles);
-
-                    foreach (DataGridViewRow row in dgvPrompts.Rows)
-                    {
-                        var data = RowClipState(row);
-                        if (File.Exists(data.ImagePath))
-                        {
-                            try
-                            {
-                                File.Delete(data.ImagePath);
-                            }
-                            catch { }
-                        }
-
-                        if (File.Exists(data.VideoPath))
-                        {
-                            try
-                            {
-                                File.Delete(data.VideoPath);
-                            }
-                            catch { }
-                        }
-
-                    }
-
-                    var clipPKs = new HashSet<Guid>();
-
-                    if (_videoGenerationState != null)
-                    {
-                        _videoGenerationState.ClipGenerationStates.ForEach(c => clipPKs.Add(c.PK));
-
-                        _videoGenerationState.Delete();
-                        _videoGenerationState = null;
-                    }
-
-                    EventBus.RaiseVideoDeleted(_videoGenerationStatePK, clipPKs);
+                    _generationService.DeleteAndCleanUp(_videoGenerationState);
                 }
                 else if (action == DialogResult.Cancel)
                 {

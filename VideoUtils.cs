@@ -119,6 +119,10 @@ namespace iviewer
                         // Calculate new fps (interpolate if < 30fps)
                         if (fps < 15 && interpolate)
                         {
+                            newFps = fps * 4;
+                        }
+                        else if (fps < 20 && interpolate)
+                        {
                             newFps = fps * 3;
                         }
                         else if (fps < 30 && interpolate)
@@ -164,8 +168,8 @@ namespace iviewer
                     await Task.Run(() => File.Copy(inputFile, outputFile, overwrite: true));
                 }
 
-                var mediaInfo = await FFProbe.AnalyseAsync(outputFile);
-                Debug.WriteLine($"Transition clip: {mediaInfo.VideoStreams[0].FrameRate} fps, {mediaInfo.VideoStreams[0].Duration} duration");
+                //var mediaInfo = await FFProbe.AnalyseAsync(outputFile);
+                //Debug.WriteLine($"Transition clip: {mediaInfo.VideoStreams[0].FrameRate} fps, {mediaInfo.VideoStreams[0].Duration} duration");
 
                 return result;
             }
@@ -226,22 +230,23 @@ namespace iviewer
 
         private static async Task<string> AdjustSpeedAsync(string inputPath, double speed, bool highQuality = true)
         {
-            if (Math.Abs(speed - 1.0) < 0.001) return inputPath; // No adjustment needed
-
             // Probe original FPS (assume consistent across clips)
             var mediaInfo = await FFProbe.AnalyseAsync(inputPath);
             double originalFps = mediaInfo.PrimaryVideoStream.FrameRate;
+            double originalDuration = mediaInfo.PrimaryVideoStream.Duration.TotalSeconds;
 
             // Set uniform FPS (high for export quality)
+            // Try always using high quality
+            //highQuality = true;
             double uniformFps = originalFps;
-
-            if (originalFps < 15 && highQuality)
-            {
-                uniformFps = originalFps * 6;
+            if (highQuality && originalFps <= 30)
+            { 
+                uniformFps = originalFps * 2;
             }
-            else if (originalFps < 30 && highQuality)
+
+            if (uniformFps == originalFps && (Math.Abs(speed - 1.0) < 0.001))
             {
-                uniformFps = originalFps * 4;
+                return inputPath;
             }
 
             // Create temp output path
@@ -281,6 +286,9 @@ namespace iviewer
                     opt.DisableChannel(Channel.Audio);
                 })
                 .ProcessAsynchronously();
+
+            var info = FFProbe.Analyse(tempOutput);
+            Debug.WriteLine($"Speed changed by {speed}. Fps from {originalFps} to {info.PrimaryVideoStream.FrameRate}. Duration from {originalDuration} to {info.PrimaryVideoStream.Duration.TotalSeconds}");
 
             return tempOutput;
         }
@@ -487,7 +495,7 @@ namespace iviewer
                 }
                 else
                 {
-                    success = await StitchVideos(validRows.ToList(), outputPath);
+                    success = await StitchVideos(validRows.ToList(), adjustedPaths, outputPath);
                 }
 
                 // Cleanup temps
@@ -709,6 +717,7 @@ namespace iviewer
 
         private static async Task<bool> StitchVideos(
             List<ClipGenerationState> clipStates,
+            List<string> videoPaths,
             string outputPath)
         {
             try
@@ -718,23 +727,28 @@ namespace iviewer
 
                 for (int i = 0; i < clipStates.Count; i++)
                 {
-                    var currentState = clipStates[i];
-                    string processedClip = await ProcessClipForJunction(currentState, tempFiles);
-                    segments.Add(processedClip);
-
-                    // If not last clip, add transition segment based on junction
                     if (i < clipStates.Count - 1)
                     {
-                        string transitionSegment = await GenerateTransitionSegment(processedClip, clipStates[i + 1].VideoPath, currentState, tempFiles);
+                        var currentState = clipStates[i];
+                        var videoClip = videoPaths[i]; // Note that we can't run on the clip state's video as we have already performed some adjustments.
+                        string processedClip = await ProcessClipForJunction(videoClip, currentState, tempFiles);
+                        segments.Add(processedClip);
+
+                        string transitionSegment = await GenerateTransitionSegment(processedClip, videoPaths[i + 1], currentState, tempFiles);
                         if (!string.IsNullOrEmpty(transitionSegment))
                         {
                             segments.Add(transitionSegment);
                         }
                     }
+                    else
+                    {
+                        // Last clip
+                        segments.Add(videoPaths[i]);
+                    }
                 }
 
                 // Probe to get duration and frame count
-                var mediaInfo = await FFProbe.AnalyseAsync(clipStates[0].VideoPath);
+                var mediaInfo = await FFProbe.AnalyseAsync(videoPaths[0]);
                 double inputFps = mediaInfo.PrimaryVideoStream.FrameRate;
 
                 // Create temp concat list file
@@ -781,22 +795,22 @@ namespace iviewer
         }
 
         // Helper: Process (trim) clip based on next junction (e.g., drop frames for Interpolate)
-        private static async Task<string> ProcessClipForJunction(ClipGenerationState clipState, List<string> tempFiles)
+        private static async Task<string> ProcessClipForJunction(string path, ClipGenerationState clipState, List<string> tempFiles)
         {
             if (!clipState.TransitionType.Equals("Interpolate") || clipState.TransitionDropFrames <= 0)
             {
-                return clipState.VideoPath; // No processing needed
+                return path; // No processing needed
             }
 
             // Probe to get duration and frame count
-            var mediaInfo = await FFProbe.AnalyseAsync(clipState.VideoPath);
+            var mediaInfo = await FFProbe.AnalyseAsync(path);
             double durationSec = mediaInfo.Duration.TotalSeconds;
             double inputFps = mediaInfo.PrimaryVideoStream.FrameRate;
             int totalFrames = (int)(durationSec * inputFps) + 1;
 
             if (clipState.TransitionDropFrames >= totalFrames)
             {
-                throw new ArgumentException($"Drop frames exceed total frames for clip: {clipState.VideoPath}");
+                throw new ArgumentException($"Drop frames exceed total frames for clip: {path}");
             }
 
             // Calculate trim duration
@@ -805,7 +819,7 @@ namespace iviewer
             // Trim to temp file
             string trimmedClip = Path.Combine(Path.GetTempPath(), $"trimmed_{Guid.NewGuid()}.mp4");
             var trimArgs = FFMpegArguments
-                .FromFileInput(clipState.VideoPath)
+                .FromFileInput(path)
                 .OutputToFile(trimmedClip, true, options =>
                 {
                     options.WithCustomArgument($"-t {trimDurationSec}");
@@ -842,6 +856,7 @@ namespace iviewer
             if (clipState.TransitionType.Equals("Fade", StringComparison.OrdinalIgnoreCase))
             {
                 // Use xfade to create a short transition segment
+                // TODO: This doesn't work. And I don't think it's the right approach to create a short transition segment. But I don't know how to stitch together otherwise.
                 double offset = clipState.TransitionDuration; // Assuming prev end overlaps with next start
                 var fadeArgs = FFMpegArguments
                     .FromFileInput(prevClip)
@@ -859,7 +874,7 @@ namespace iviewer
             else if (clipState.TransitionType.Equals("Interpolate", StringComparison.OrdinalIgnoreCase))
             {
                 int numInterpFrames = clipState.TransitionAddFrames;
-                if (numInterpFrames < 4) return string.Empty; // minterpolate requires at least 4 input frames
+                //if (numInterpFrames < 4) return string.Empty; // minterpolate requires at least 4 input frames
 
                 // Get total frames for prev and next (approximate via duration * fps)
                 var prevMediaInfo = await FFProbe.AnalyseAsync(prevClip);
