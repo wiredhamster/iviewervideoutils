@@ -237,7 +237,8 @@ namespace iviewer
 
             // Set uniform FPS (high for export quality)
             // Try always using high quality
-            //highQuality = true;
+            // Try not using hq for export testing.
+            highQuality = false;
             double uniformFps = originalFps;
             if (highQuality && originalFps <= 30)
             { 
@@ -1010,7 +1011,7 @@ namespace iviewer
                 // Update mediaInfo and set transitionClip
                 transitionClip = finalTransitionClip;
 
-                mediaInfo = await FFProbe.AnalyseAsync(transitionClip);
+                //mediaInfo = await FFProbe.AnalyseAsync(transitionClip);
             }
 
             return transitionClip;
