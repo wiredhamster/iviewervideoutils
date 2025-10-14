@@ -11,7 +11,6 @@ namespace iviewer
 {
     public partial class VideoGenerator : Form
     {
-        private readonly VideoGenerationConfig _config;
         private readonly VideoGenerationService _generationService;
         private readonly FileManagementService _fileService;
 
@@ -50,9 +49,8 @@ namespace iviewer
             var pk = videoGenerationStatePK.HasValue && videoGenerationStatePK.Value != Guid.Empty ? videoGenerationStatePK.Value : Guid.NewGuid();
             _videoGenerationStatePK = pk;
 
-            _config = new VideoGenerationConfig();
-            _generationService = new VideoGenerationService(_config);
-            _fileService = new FileManagementService(_config);
+            _generationService = new VideoGenerationService();
+            _fileService = new FileManagementService();
 
             //InitializeGrid(videoGenerationStatePK == null);
             InitializeGrid();
@@ -242,7 +240,7 @@ namespace iviewer
             }
             else if (rowIndex > 0 && RowClipState(rowIndex - 1).VideoPath != "")
             {
-                string framePath = VideoUtils.ExtractLastFrame(RowClipState(rowIndex - 1).VideoPath, _fileService.TempDir, true);
+                string framePath = VideoUtils.ExtractLastFrame(RowClipState(rowIndex - 1).VideoPath, VideoGenerationConfig.TempFileDir, true);
                 if (!string.IsNullOrEmpty(framePath) && File.Exists(framePath))
                 {
                     RowClipState(rowIndex).ImagePath = framePath;
@@ -452,7 +450,7 @@ namespace iviewer
 
             try
             {
-                string framePath = VideoUtils.ExtractLastFrame(videoPath, _fileService.TempDir, true);
+                string framePath = VideoUtils.ExtractLastFrame(videoPath, VideoGenerationConfig.TempFileDir, true);
                 if (!string.IsNullOrEmpty(framePath) && File.Exists(framePath))
                 {
                     // Determine target row (next row if exists, otherwise current)
@@ -769,8 +767,7 @@ namespace iviewer
 
             try
             {
-                // TODO: need to test with both standard and high quality
-                _previewVideoPath = await _generationService.StitchVideos(GeneratedRows.ToList(), false);
+                _previewVideoPath = await _generationService.StitchVideos(_videoGenerationState, false);
 
                 if (!string.IsNullOrEmpty(_previewVideoPath))
                 {
@@ -1114,7 +1111,7 @@ namespace iviewer
                 if (Path.GetExtension(ofd.FileName).ToLower() == ".mp4")
                 {
                     // Extract first frame for video
-                    thumbnailPath = VideoUtils.ExtractFirstFrame(ofd.FileName, _fileService.TempDir, true);
+                    thumbnailPath = VideoUtils.ExtractFirstFrame(ofd.FileName, VideoGenerationConfig.TempFileDir, true);
                     _tempFiles.Add(thumbnailPath);
                     RowClipState(rowIndex).VideoPath = ofd.FileName;
                     wasGenerated = true;
@@ -1711,13 +1708,20 @@ namespace iviewer
 
     #region Data Classes
 
-    public class VideoGenerationConfig
+    public static class VideoGenerationConfig
     {
-        public string OutputDir { get; set; } = @"C:\Users\sysadmin\Documents\ComfyUI\output\iviewer";
-        public string TempDir => Path.Combine(OutputDir, "temp");
-        public string WorkflowPath { get; set; } = @"C:\xfer\Simplified - Export API.json";
-        public string WorkflowPathLast { get; set; } = @"C:\xfer\iViewer Wan22 flf - Export API.json";
-        public string ExportDir { get; set; } = @"D:\Users\sysadmin\Archive\Visual Studio Projects\SD-Processed";
+        public static string ComfyOutputDir => @"C:\Users\sysadmin\Documents\ComfyUI\output\iviewer\temp_output";
+        public static string TempFileDir => @"C:\Users\sysadmin\Documents\ComfyUI\output\iviewer\temp_files";
+        public static string WorkingDir => @"C:\Users\sysadmin\Documents\ComfyUI\output\iviewer";
+        public static string I2vWorkflowPath => @"C:\Users\sysadmin\Documents\ComfyUI\user\default\workflows\iviewer\Wan22 i2v - API.json";
+        public static string I2vWorkflowFileStem => "comfyui_video";
+        public static string FlfWorkflowPath => @"C:\Users\sysadmin\Documents\ComfyUI\user\default\workflows\iviewer\Wan22 flf - API.json";
+        public static string FlfWorkflowFileStem => "comfyui_video";
+        public static string InterpolateWorkflowPath => @"C:\Users\sysadmin\Documents\ComfyUI\user\default\workflows\iviewer\Interpolate - API.json";
+        public static string InterpolateWorkflowFileStem => "interpolated_";
+        public static string UpscaleWorkflowPath => @"C:\Users\sysadmin\Documents\ComfyUI\user\default\workflows\iviewer\Upscale - API.json";
+        public static string UpscaleWorkflowFileStem => "upscaled_";
+        public static string ExportDir { get; set; } = @"D:\Users\sysadmin\Archive\Visual Studio Projects\SD-Processed";
     }
 
     #endregion

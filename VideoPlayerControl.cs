@@ -1,6 +1,7 @@
 ﻿using LibVLCSharp.Shared;
 using LibVLCSharp.WinForms;
 using System;
+using System.Diagnostics;
 using System.IO;
 using System.Windows.Forms;
 using static System.Windows.Forms.VisualStyles.VisualStyleElement;
@@ -62,22 +63,97 @@ namespace iviewer
 			}
 		}
 
-		void Play()
-		{
-			currentStream.Position = 0; // Reset position
-			var streamMediaInput = new StreamMediaInput(currentStream);
-			currentMedia = new Media(libVLC, streamMediaInput);
+        void Play()
+        {
+            try
+            {
+                // Verify media player is valid
+                if (mediaPlayer == null || mediaPlayer.NativeReference == IntPtr.Zero)
+                {
+                    Debug.WriteLine("MediaPlayer is null or disposed, cannot play");
+                    return;
+                }
 
-			if (Loop)
-			{
-				currentMedia.AddOption(":input-repeat=10000"); // Enable native looping
-			}
+                // Verify stream is valid
+                if (currentStream == null || !currentStream.CanRead)
+                {
+                    Debug.WriteLine("Stream is null or cannot be read");
+                    return;
+                }
 
-			mediaPlayer.Play(currentMedia);
-			mediaPlayer.SetRate(1f); // Required as Rate is saved for the lifetime of the player
-		}
+                // Quick stop without timeout - don't wait for completion
+                try
+                {
+                    if (mediaPlayer.IsPlaying)
+                    {
+                        // Use Pause instead of Stop - it's instant
+                        mediaPlayer.Pause();
+                    }
+                }
+                catch (Exception ex)
+                {
+                    Debug.WriteLine($"Error pausing: {ex.Message}");
+                }
 
-		public void SetSpeed(double speed)
+                // Dispose old media
+                try
+                {
+                    currentMedia?.Dispose();
+                    currentMedia = null;
+                }
+                catch (Exception ex)
+                {
+                    Debug.WriteLine($"Error disposing media: {ex.Message}");
+                }
+
+                // Small delay for cleanup
+                System.Threading.Thread.Sleep(50);
+
+                // Reset stream position
+                try
+                {
+                    if (currentStream.CanSeek)
+                    {
+                        currentStream.Position = 0;
+                    }
+                }
+                catch (Exception ex)
+                {
+                    Debug.WriteLine($"Error resetting stream position: {ex.Message}");
+                    return;
+                }
+
+                // Create and configure media
+                var streamMediaInput = new StreamMediaInput(currentStream);
+                currentMedia = new Media(libVLC, streamMediaInput);
+
+                if (Loop)
+                {
+                    currentMedia.AddOption(":input-repeat=10000");
+                }
+
+                // Play the media
+                if (mediaPlayer.Play(currentMedia))
+                {
+                    mediaPlayer.SetRate(1f);
+                    Debug.WriteLine("Playback started successfully");
+                }
+                else
+                {
+                    Debug.WriteLine("Failed to start playback");
+                }
+            }
+            catch (AccessViolationException ex)
+            {
+                Debug.WriteLine($"Access violation in Play(): {ex.Message}");
+            }
+            catch (Exception ex)
+            {
+                Debug.WriteLine($"Error in Play(): {ex.Message}");
+            }
+        }
+
+        public void SetSpeed(double speed)
 		{
             if (speed != 1)
             {
@@ -85,43 +161,103 @@ namespace iviewer
             }
         }
 
-		public async void StopAndHide()
-		{
-			try
-			{
-				if (InvokeRequired)
-				{
-                    Invoke(new Action(StopAndHide));
-                    return;
+        public async Task StopAndHide()
+        {
+            try
+            {
+                // Check if invoke is even possible
+                if (this.IsHandleCreated && !this.IsDisposed)
+                {
+                    if (this.InvokeRequired)
+                    {
+                        this.Invoke(new Action(() => StopMediaPlayer()));
+                    }
+                    else
+                    {
+                        StopMediaPlayer();
+                    }
                 }
-
-				// My theory is that this hangs here if there is file contention due to failed deletes.
-				// I think we should move deleting temp files to the queue. And only raise an event to do it after closing the form.
-				if (mediaPlayer.IsPlaying)
-				{
-					var stopTask = Task.Run(() =>
-					{
-						mediaPlayer.Stop();
-					});
-
-					// Wait with timeout (e.g., 5 seconds)
-					if (!stopTask.Wait(TimeSpan.FromSeconds(5)))
-					{
-						// Timeout: Force dispose or handle hang (can't kill VLC thread, but continue app)
-						// Log "Stop timed out"
-					}
-				}
-
-				currentMedia?.Dispose();
-				currentMedia = null;
-			}
-			catch (Exception ex)
-			{
-				// Log ex if needed
-			}
+                else
+                {
+                    // Handle not created or disposed, just stop directly
+                    StopMediaPlayer();
+                }
+            }
+            catch (Exception ex)
+            {
+                Debug.WriteLine($"Error in StopAndHide: {ex.Message}");
+            }
         }
 
-		protected override void Dispose(bool disposing)
+        private void StopMediaPlayer()
+        {
+            try
+            {
+                if (mediaPlayer != null && mediaPlayer.NativeReference != IntPtr.Zero)
+                {
+                    try
+                    {
+                        // Try Pause first (more reliable)
+                        if (mediaPlayer.IsPlaying)
+                        {
+                            var pauseTask = Task.Run(() =>
+                            {
+                                try
+                                {
+                                    mediaPlayer.Pause();
+                                }
+                                catch { }
+                            });
+
+                            if (!pauseTask.Wait(500))
+                            {
+                                Debug.WriteLine("Pause timed out, trying Stop");
+
+                                // If Pause times out, try Stop with timeout
+                                var stopTask = Task.Run(() =>
+                                {
+                                    try
+                                    {
+                                        mediaPlayer.Stop();
+                                    }
+                                    catch { }
+                                });
+
+                                if (!stopTask.Wait(1000))
+                                {
+                                    Debug.WriteLine("Stop also timed out, forcing cleanup");
+                                }
+                            }
+                        }
+                    }
+                    catch (AccessViolationException)
+                    {
+                        Debug.WriteLine("MediaPlayer already disposed");
+                    }
+                    catch (Exception ex)
+                    {
+                        Debug.WriteLine($"Error stopping playback: {ex.Message}");
+                    }
+                }
+
+                // Always try to dispose media
+                try
+                {
+                    currentMedia?.Dispose();
+                    currentMedia = null;
+                }
+                catch (Exception ex)
+                {
+                    Debug.WriteLine($"Error disposing media: {ex.Message}");
+                }
+            }
+            catch (Exception ex)
+            {
+                Debug.WriteLine($"Error in StopMediaPlayer: {ex.Message}");
+            }
+        }
+
+        protected override void Dispose(bool disposing)
 		{
 			if (disposing)
 			{

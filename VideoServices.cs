@@ -1,26 +1,30 @@
-﻿using FFMpegCore;
+﻿using CefSharp.Internals;
+using FFMpegCore;
+using FFMpegCore.Enums;
+using iviewer;
 using iviewer.Helpers;
+using iviewer.Services;
 using iviewer.Video;
 using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
 using System.Diagnostics;
+using System.IO;
 using System.Text;
 
 namespace iviewer.Services
 {
     internal class VideoGenerationService
     {
-        private readonly VideoGenerationConfig _config;
         private readonly HttpClient _httpClient;
 
-        public VideoGenerationService(VideoGenerationConfig config)
+        public VideoGenerationService()
         {
-            _config = config;
             _httpClient = new HttpClient { BaseAddress = new Uri("http://127.0.0.1:8000") };
 
             // Ensure directories exist
-            Directory.CreateDirectory(_config.OutputDir);
-            Directory.CreateDirectory(_config.TempDir);
+            Directory.CreateDirectory(VideoGenerationConfig.ComfyOutputDir);
+            Directory.CreateDirectory(VideoGenerationConfig.TempFileDir);
+            Directory.CreateDirectory(VideoGenerationConfig.WorkingDir);
         }
 
         public void QueueClips(VideoGenerationState state)
@@ -97,8 +101,8 @@ namespace iviewer.Services
             }
 
             string selectedWorkflow = string.IsNullOrEmpty(endImagePath)
-                ? _config.WorkflowPath
-                : _config.WorkflowPathLast;
+                ? VideoGenerationConfig.I2vWorkflowPath
+                : VideoGenerationConfig.FlfWorkflowPath;
 
             string workflowJson = await PrepareWorkflowAsync(selectedWorkflow, clip.Prompt, clip.ImagePath, endImagePath, video.Width, video.Height);
 
@@ -120,6 +124,130 @@ namespace iviewer.Services
 
             return videoPath;
         }
+
+        public async Task<string> InterpolateAndAdjustSpeedAsync(string inputVideo, int fpsMultiplier, double speedFactor)
+        {
+            var tempFiles = new List<string>();
+
+            var info = await FFProbe.AnalyseAsync(inputVideo);
+            var inputFps = info.PrimaryVideoStream.FrameRate;
+
+            double targetFps = inputFps * fpsMultiplier; // TODO: Why would this be different
+
+            int rifeMultiplier = fpsMultiplier;
+
+            if (speedFactor < 1.0) // Slow down
+            {
+                rifeMultiplier = (int)Math.Ceiling(fpsMultiplier / speedFactor);
+                if (rifeMultiplier < 1) rifeMultiplier = 1;
+                if (rifeMultiplier > 4) rifeMultiplier = 4; // Clamp for quality/speed
+            }
+            else if (speedFactor > 1.0) // Speed up
+            {
+                rifeMultiplier = speedFactor < fpsMultiplier ? fpsMultiplier : 1;
+            }
+
+            var interpolated = "";
+            double interpolatedFps = inputFps * rifeMultiplier;
+
+            if (rifeMultiplier == 1 && interpolatedFps == inputFps)
+            {
+                interpolated = inputVideo;
+            }
+            else
+            {
+                interpolated = await InterpolateVideoAsync(inputVideo, rifeMultiplier, interpolatedFps);
+            }
+
+            // Calculate PTS multiplier to go from interpolatedFps to targetFps
+            //double ptsMultiplier = interpolatedFps / (speedFactor * targetFps);
+            double ptsMultiplier = 1 / speedFactor;
+
+            var outputVideo = interpolated;
+
+            if (Math.Abs(ptsMultiplier - 1) > 0.001)
+            {
+                outputVideo = Path.Combine(VideoGenerationConfig.TempFileDir, $"speed_adjusted_{Guid.NewGuid()}.mp4");
+
+                await FFMpegArguments
+                        .FromFileInput(inputVideo)
+                        .OutputToFile(outputVideo, true, options =>
+                        {
+                            options.WithVideoCodec("libx264");
+                            options.WithConstantRateFactor(23);
+                            options.WithCustomArgument($"-vf \"setpts={ptsMultiplier:F6}*PTS\"");
+                            options.WithCustomArgument($"-r {targetFps}");
+                            options.WithCustomArgument("-pix_fmt yuv420p");
+                            options.WithCustomArgument("-an"); // No audio
+                        })
+                        .ProcessAsynchronously();
+            }
+
+            // Now delete the intermediate file.
+            if (interpolated != inputVideo && interpolated != outputVideo)
+            {
+                File.Delete(interpolated);
+            }
+
+            //var mediaInfo = FFProbe.Analyse(outputVideo);
+
+            return outputVideo;
+        }
+
+        async Task<string> InterpolateVideoAsync(string inputVideo, int rifeMultiplier, double targetFps)
+        {
+            string templatePath = VideoGenerationConfig.InterpolateWorkflowPath;
+            string workflowJson = await File.ReadAllTextAsync(templatePath);
+            var uploadedVideo = await UploadVideoAsync(inputVideo);
+
+            // String replacements
+            workflowJson = workflowJson.Replace("{RIFE_MULTIPLIER}", rifeMultiplier.ToString())
+                                       .Replace("{TARGET_FPS}", targetFps.ToString("F1")) // 1 decimal for FPS
+                                       .Replace("{INPUT_VIDEO}", uploadedVideo);
+
+            // Validate JSON
+            try
+            {
+                JObject.Parse(workflowJson);
+            }
+            catch (Exception ex)
+            {
+                throw new Exception($"Invalid JSON after replacements: {ex.Message}");
+            }
+
+            var videoPath = await ExecuteWorkflowAsync(workflowJson);
+
+            //var mediaInfo = FFProbe.Analyse(videoPath);
+
+            return videoPath;
+        }
+
+        async Task<string> UpscaleVideoAsync(string inputVideo)
+        {
+            string templatePath = VideoGenerationConfig.UpscaleWorkflowPath;
+            string workflowJson = await File.ReadAllTextAsync(templatePath);
+            var uploadedVideo = await UploadVideoAsync(inputVideo);
+
+            // String replacements
+            workflowJson = workflowJson.Replace("{INPUT_VIDEO}", uploadedVideo);
+
+            // Validate JSON
+            try
+            {
+                JObject.Parse(workflowJson);
+            }
+            catch (Exception ex)
+            {
+                throw new Exception($"Invalid JSON after replacements: {ex.Message}");
+            }
+
+            var videoPath = await ExecuteWorkflowAsync(workflowJson);
+
+            //var mediaInfo = FFProbe.Analyse(videoPath);
+
+            return videoPath;
+        }
+
 
         private async Task<string> PrepareWorkflowAsync(string workflowPath, string prompt, string imagePath, string endImagePath, int width, int height)
         {
@@ -163,6 +291,40 @@ namespace iviewer.Services
                 var response = await _httpClient.PostAsync("/upload/image", multipartContent);
                 string responseBody = await response.Content.ReadAsStringAsync();
 
+                if (!response.IsSuccessStatusCode)
+                {
+                    throw new Exception($"Upload failed for {filename}: {responseBody}");
+                }
+
+                var result = JObject.Parse(responseBody);
+                return result["name"]?.ToString() ?? filename;
+            }
+            catch (Exception ex)
+            {
+                return null;
+            }
+        }
+
+        private async Task<string> UploadVideoAsync(string videoPath)
+        {
+            try
+            {
+                string filename = Path.GetFileName(videoPath);
+
+                var extension = Path.GetExtension(videoPath).ToLower();
+                string contentType = extension == ".mp4" ? "video/mp4" :
+                    extension == ".mov" ? "video/mov"
+                    : "video/quicktime";
+
+                using var fileStream = File.OpenRead(videoPath);
+                using var multipartContent = new MultipartFormDataContent();
+
+                var fileContent = new StreamContent(fileStream);
+                fileContent.Headers.ContentType = new System.Net.Http.Headers.MediaTypeHeaderValue(contentType);
+                multipartContent.Add(fileContent, "image", filename); // Key "video" for VHS extension
+
+                var response = await _httpClient.PostAsync("/upload/image", multipartContent);
+                string responseBody = await response.Content.ReadAsStringAsync();
                 if (!response.IsSuccessStatusCode)
                 {
                     throw new Exception($"Upload failed for {filename}: {responseBody}");
@@ -244,9 +406,10 @@ namespace iviewer.Services
             return false;
         }
 
+        // TODO: This should include the file pattern to look for
         private string FindGeneratedVideo()
         {
-            var tempVideos = Directory.GetFiles(_config.TempDir, "*.mp4")
+            var tempVideos = Directory.GetFiles(VideoGenerationConfig.ComfyOutputDir, "*.mp4")
                 .Select(f => new { Path = f, Time = File.GetCreationTime(f) })
                 .OrderByDescending(x => x.Time)
                 .FirstOrDefault();
@@ -256,34 +419,378 @@ namespace iviewer.Services
                 throw new Exception("No video found in temp directory after completion");
             }
 
-            string uniqueName = $"video_row_{DateTime.Now:yyyyMMdd_HHmmss}.mp4";
-            string finalPath = Path.Combine(_config.OutputDir, uniqueName);
+            string uniqueName = $"comfy_{Guid.NewGuid().ToString()}.mp4";
+            string finalPath = Path.Combine(VideoGenerationConfig.WorkingDir, uniqueName);
             File.Move(tempVideos.Path, finalPath);
+
+            // Delete any associated .png file.
+            var pngFile = Path.Combine(Path.GetDirectoryName(tempVideos.Path), Path.GetFileNameWithoutExtension(tempVideos.Path) + ".png");
+            if (File.Exists(pngFile))
+            {
+                File.Delete(pngFile);
+            }
 
             return Path.GetFullPath(finalPath);
         }
 
-        internal async Task<string> StitchVideos(List<ClipGenerationState> clips, bool highQuality = true)
+        internal async Task<string> ExportVideo(VideoGenerationState video)
         {
-            string previewFilename = $"preview_{DateTime.Now:yyyyMMdd_HHmmss}.mp4";
-            string previewPath = Path.Combine(_config.TempDir, previewFilename);
-
-            var success = await VideoUtils.StitchVideosWithTransitionsAsync(clips,
-                previewPath,
-                true,
-                highQuality);
-
-            if (success)
+            var path = await StitchVideos(video, true);
+            if (string.IsNullOrEmpty(path))
             {
-                return previewPath;
+                return "";
             }
-            else
+
+            return path;
+        }
+
+        internal async Task<string> StitchVideos(VideoGenerationState video, bool highQuality)
+        {
+            try
             {
+                var clipStates = video.ClipGenerationStates.Where(r => !string.IsNullOrEmpty(r.VideoPath) && File.Exists(r.VideoPath)).ToList();
+                if (!clipStates.Any())
+                {
+                    return "";
+                }
+
+                var tempFiles = new List<string>(); // For cleanup
+                var processedClips = new List<string>();
+
+                // Create junction segments
+                for (int i = 0; i < clipStates.Count; i++)
+                {
+                    if (i < clipStates.Count - 1)
+                    {
+                        var currentState = clipStates[i];
+                        var videoClip = clipStates[i].VideoPath;
+                        string processedClip = await ProcessClipForJunction(videoClip, currentState, highQuality, tempFiles);
+                        tempFiles.Add(processedClip);
+
+                        string transitionSegment = await GenerateTransitionSegment(processedClip, clipStates[i + 1].VideoPath, currentState, highQuality, tempFiles);
+                        if (!string.IsNullOrEmpty(transitionSegment))
+                        {
+                            tempFiles.Add(transitionSegment);
+
+                            var joinedClip = Path.Combine(VideoGenerationConfig.TempFileDir, "joined_" + Guid.NewGuid().ToString() + ".mp4");
+                            await VideoUtils.ConcatenateVideoClipsAsync(new List<string> { processedClip, transitionSegment }, joinedClip);
+
+                            tempFiles.Add(joinedClip);
+
+                            processedClips.Add(joinedClip);
+                        }
+                        else
+                        {
+                            processedClips.Add(processedClip);
+                        }
+                    }
+                    else
+                    {
+                        // Last clip
+                        // On balance it is better to ignore Drop Frames for the last clip. Otherwise we have to automatically handle deciding if drop frames are genuinely required, or just the default values
+                        processedClips.Add(clipStates[i].VideoPath);
+                    }
+                }
+
+                // Upscale clips
+                if (highQuality)
+                {
+                    var hqClips = new List<string>();
+                    foreach (var clipPath in processedClips)
+                    {
+                        var hqPath = await UpscaleVideoAsync(clipPath);
+                        hqClips.Add(hqPath);
+                        tempFiles.Add(hqPath);
+                    }
+
+                    processedClips = hqClips;
+                }
+
+                // Process clips for speed adjustments
+                var adjustedPaths = new List<string>();
+                for (var i = 0; i < processedClips.Count; i++)
+                {
+                    var clip = processedClips[i];
+                    var clipSpeed = clipStates[i].ClipSpeed;
+
+                    string adjusted = await VideoUtils.AdjustSpeedAsync(clip, clipSpeed, highQuality);
+                    adjustedPaths.Add(adjusted);
+                    if (adjusted != clip)
+                    {
+                        tempFiles.Add(adjusted);
+                    }
+                }
+
+                processedClips = adjustedPaths;
+
+                var outputPath = Path.Combine(VideoGenerationConfig.TempFileDir, $"Stitched_{DateTime.Now.Ticks}.mp4");
+                await VideoUtils.ConcatenateVideoClipsAsync(processedClips, outputPath);
+
+                //var mediaInfo = FFProbe.Analyse(outputPath);
+
+                if (highQuality)
+                {
+                    // Let's check the video.
+                    //throw new Exception("Didnt work");
+                }
+
+                // Cleanup temps
+                foreach (var temp in tempFiles.Where(File.Exists))
+                {
+                    try { File.Delete(temp); } catch { }
+                }
+
+                return outputPath;
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"Error in video stitching: {ex.Message}");
                 return "";
             }
         }
 
-        internal async Task DeleteAndCleanUp(VideoGenerationState videoGenerationState)
+        // Helper: Process (trim) clip based on next junction (e.g., drop frames for Interpolate)
+        private static async Task<string> ProcessClipForJunction(string path, ClipGenerationState clipState, bool highQuality, List<string> tempFiles)
+        {
+            // TODO: we should default dropFrames = 1 for transition type 'None'.
+        if (!clipState.TransitionType.Equals("Interpolate") || clipState.TransitionDropFrames <= 0)
+        {
+            return path; // No processing needed
+        }
+
+        // Probe to get duration and frame count
+        var mediaInfo = await FFProbe.AnalyseAsync(path);
+        double durationSec = mediaInfo.Duration.TotalSeconds;
+        double inputFps = mediaInfo.PrimaryVideoStream.FrameRate;
+        int totalFrames = (int)(durationSec * inputFps) + 1;
+
+        if (clipState.TransitionDropFrames >= totalFrames)
+        {
+            throw new ArgumentException($"Drop frames exceed total frames for clip: {path}");
+        }
+
+        // Calculate trim duration
+        double trimDurationSec = durationSec - ((clipState.TransitionDropFrames + 1) / inputFps);
+
+        // Trim to temp file
+        string trimmedClip = Path.Combine(VideoGenerationConfig.TempFileDir, $"trimmed_{Guid.NewGuid()}.mp4");
+        var trimArgs = FFMpegArguments
+            .FromFileInput(path)
+            .OutputToFile(trimmedClip, true, options =>
+            {
+                options.WithCustomArgument($"-t {trimDurationSec}");
+                options.WithVideoCodec("libx264");
+                options.WithCustomArgument("-an");
+                options.WithFramerate(inputFps);
+            });
+        await trimArgs.ProcessAsynchronously();
+        tempFiles.Add(trimmedClip);
+
+        return trimmedClip;
+    }
+
+    // Helper: Generate transition segment based on type
+    private static async Task<string> GenerateTransitionSegment(
+        string prevClip,
+        string nextClip,
+        ClipGenerationState clipState,
+        bool highQuality,
+        List<string> tempFiles)
+    {
+        if (clipState.TransitionType.Equals("None", StringComparison.OrdinalIgnoreCase))
+        {
+            return string.Empty; // No segment
+        }
+
+        // Probe to get duration and frame count
+        var mediaInfo = await FFProbe.AnalyseAsync(prevClip);
+        double durationSec = mediaInfo.Duration.TotalSeconds;
+        double inputFps = mediaInfo.PrimaryVideoStream.FrameRate;
+        int totalFrames = (int)(durationSec * inputFps);
+
+        string transitionClip = Path.Combine(VideoGenerationConfig.TempFileDir, $"transition_{Guid.NewGuid()}.mp4");
+
+        if (clipState.TransitionType.Equals("Fade", StringComparison.OrdinalIgnoreCase))
+        {
+            // Use xfade to create a short transition segment
+            // TODO: This doesn't work. And I don't think it's the right approach to create a short transition segment. But I don't know how to stitch together otherwise.
+            double offset = clipState.TransitionDuration; // Assuming prev end overlaps with next start
+            var fadeArgs = FFMpegArguments
+                .FromFileInput(prevClip)
+                .AddFileInput(nextClip)
+                .OutputToFile(transitionClip, true, options =>
+                {
+                    options.WithCustomArgument($"-filter_complex \"[0:v][1:v]xfade=transition=fade:duration={clipState.TransitionDuration}:offset={offset},settb=1/1000000\"");
+                    options.WithVideoCodec("libx264");
+                    options.WithCustomArgument("-an");
+                    options.WithFramerate(inputFps);
+                    options.WithCustomArgument($"-t {clipState.TransitionDuration * 2}"); // Approx length of transition
+                });
+            await fadeArgs.ProcessAsynchronously();
+        }
+        else if (clipState.TransitionType.Equals("Interpolate", StringComparison.OrdinalIgnoreCase))
+        {
+            int numInterpFrames = clipState.TransitionAddFrames;
+            int interpFactor = numInterpFrames + 1; // If we want 2 interpolation frames then we need the increase the number of frames by 3.
+
+            // Get total frames for prev and next (approximate via duration * fps)
+            var prevMediaInfo = await FFProbe.AnalyseAsync(prevClip);
+            var prevStream = prevMediaInfo.PrimaryVideoStream;
+            if (prevStream == null) return string.Empty;
+
+            double approxPrevTotalFrames = prevMediaInfo.Duration.TotalSeconds * prevStream.FrameRate;
+            int totalPrevFrames = (int)Math.Ceiling(approxPrevTotalFrames);
+
+            var nextMediaInfo = await FFProbe.AnalyseAsync(nextClip);
+            var nextStream = nextMediaInfo.PrimaryVideoStream;
+            if (nextStream == null) return string.Empty;
+
+            double approxNextTotalFrames = nextMediaInfo.Duration.TotalSeconds * nextStream.FrameRate;
+            int totalNextFrames = (int)Math.Ceiling(approxNextTotalFrames);
+
+            if (totalPrevFrames < interpFactor || totalNextFrames < interpFactor)
+            {
+                // Not enough frames in clips; handle gracefully (e.g., fall back to simple concat or log error)
+                return string.Empty;
+            }
+
+            string extractDir = Path.GetDirectoryName(prevClip); // Reuse prevClip dir for extracts
+
+            // Extract the 4 keyframes. Note that it is a zero based index.
+            int frame1Index = totalPrevFrames - numInterpFrames - 2; // numInterpFrames before the end
+            string frame1 = await VideoUtils.ExtractFrameAtAsync(prevClip, frame1Index, extractDir, inputFps);
+            tempFiles.Add(frame1);
+
+            string frame2 = await VideoUtils.ExtractFrameAtAsync(prevClip, totalPrevFrames - 1, extractDir, inputFps); // Last frame
+            tempFiles.Add(frame2);
+
+            string frame3 = await VideoUtils.ExtractFrameAtAsync(nextClip, 0, extractDir, inputFps); // First frame
+            tempFiles.Add(frame3);
+
+            int frame4Index = numInterpFrames + 1;
+            string frame4 = await VideoUtils.ExtractFrameAtAsync(nextClip, frame4Index, extractDir, inputFps);
+            tempFiles.Add(frame4);
+
+            // Build file list for concat (4 frames)
+            string fileListPath = Path.Combine(extractDir, $"filelist_{DateTime.Now.Ticks}.txt");
+            var fileListContent = new List<string>
+                    {
+                        $"file '{frame1.Replace("\\", "/")}'",
+                        $"file '{frame2.Replace("\\", "/")}'",
+                        $"file '{frame3.Replace("\\", "/")}'",
+                        $"file '{frame4.Replace("\\", "/")}'"
+                    };
+
+            await File.WriteAllLinesAsync(fileListPath, fileListContent);
+            tempFiles.Add(fileListPath);
+
+            // Calculate bridge FPS for slower spacing over longer duration (allows more interpolation blending before trimming middle)
+            // Desired transition duration (output after trim)
+            var bridgeFps = (double)inputFps / interpFactor;
+            var numInputFrames = 4;
+            var bridgeDuration = (double)numInputFrames / bridgeFps; // 4s for your test (even spacing, last frame held for full 1/bridgeFps)
+            string bridgeVideo = Path.Combine(VideoGenerationConfig.TempFileDir, $"bridge_{Guid.NewGuid()}.mp4");
+
+            await FFMpegArguments
+                .FromFileInput(fileListPath, false, inputOptions =>
+                {
+                    inputOptions.ForceFormat("concat");
+                    inputOptions.WithCustomArgument("-safe 0");
+                })
+                .OutputToFile(bridgeVideo, true, options =>
+                {
+                    options.WithVideoCodec("libx264");
+                    options.WithConstantRateFactor(23);
+                    options.WithCustomArgument($"-r {bridgeFps}"); // Output framerate for even spacing
+                    options.WithCustomArgument($"-vf \"setpts=N/{bridgeFps}/TB,fps={bridgeFps}\""); // Retime for precise hold times (total ~{bridgeDuration}s)
+                    options.WithCustomArgument("-pix_fmt yuv420p");
+                    //options.WithCustomArgument("-vframes " + numInputFrames); // Exact input frame count
+                })
+                .ProcessAsynchronously();
+
+            tempFiles.Add(bridgeVideo);
+
+            //mediaInfo = await FFProbe.AnalyseAsync(bridgeVideo);
+
+            var interpolatedClip = "";
+
+            if (highQuality)
+            {
+                // Use Comfy UI workflow
+                var service = new VideoGenerationService();
+                interpolatedClip = await service.InterpolateVideoAsync(bridgeVideo, interpFactor, inputFps);
+
+                if (string.IsNullOrEmpty(interpolatedClip))
+                {
+                    throw new Exception("Error interpolating video");
+                }
+            }
+            else
+            {
+                interpolatedClip = Path.Combine(VideoGenerationConfig.TempFileDir, $"interpolated_{Guid.NewGuid()}.mp4");
+
+                // Interpolate to inputFps (preserves duration ~bridgeDuration)
+                await FFMpegArguments
+                    .FromFileInput(bridgeVideo)
+                    .OutputToFile(interpolatedClip, true, options =>
+                    {
+                        options.WithCustomArgument("-v verbose");
+                        options.WithCustomArgument($"-vf minterpolate=fps={inputFps}:mi_mode=mci:mc_mode=aobmc:vsbmc=1:scd=none");
+                        options.WithVideoCodec("libx264");
+                        options.WithConstantRateFactor(23);
+                        options.WithCustomArgument("-pix_fmt yuv420p");
+                        options.WithCustomArgument("-an");
+                    })
+                    .ProcessAsynchronously();
+            }
+
+            //mediaInfo = await FFProbe.AnalyseAsync(interpolatedClip);
+
+            tempFiles.Add(interpolatedClip);
+
+            // Trim interpolated clip
+            mediaInfo = await FFProbe.AnalyseAsync(interpolatedClip);
+            var interpStream = mediaInfo.PrimaryVideoStream;
+            double approxInterpTotalFrames = mediaInfo.Duration.TotalSeconds * interpStream.FrameRate;
+            int totalInterpFrames = (int)Math.Ceiling(approxInterpTotalFrames);
+            string finalTransitionClip = transitionClip; // Default to interpolated if no trim needed
+
+            if (totalInterpFrames > numInterpFrames)
+            {
+                int startFrame = 2 + numInterpFrames; // 2 key frames plus the interp frames in between
+                double startTime = (double)startFrame / inputFps;
+                double trimDuration = (double)numInterpFrames / inputFps;
+
+                finalTransitionClip = Path.Combine(VideoGenerationConfig.TempFileDir, $"transition_trimmed_{Guid.NewGuid()}.mp4");
+                await FFMpegArguments
+                    .FromFileInput(interpolatedClip, false, inputOptions =>
+                    {
+                        inputOptions.WithCustomArgument($"-ss {startTime}"); // Seek via custom -ss on input (fast approx)
+                    })
+                    .OutputToFile(finalTransitionClip, true, options =>
+                    {
+                        options.WithDuration(TimeSpan.FromSeconds(trimDuration)); // Exact duration enforcement
+                        options.WithVideoCodec("libx264"); // Key fix: Re-encode for precise -t (no copy imprecision)
+                        options.WithConstantRateFactor(23);
+                        options.WithCustomArgument($"-r {inputFps}"); // Lock to exact framerate
+                        options.WithCustomArgument("-pix_fmt yuv420p");
+                        options.WithCustomArgument("-an");
+                    })
+                    .ProcessAsynchronously();
+
+                tempFiles.Add(finalTransitionClip);
+            }
+
+            // Update mediaInfo and set transitionClip
+            transitionClip = finalTransitionClip;
+
+            //mediaInfo = await FFProbe.AnalyseAsync(transitionClip);
+        }
+
+        return transitionClip;
+    }
+
+    internal async Task DeleteAndCleanUp(VideoGenerationState videoGenerationState)
         {
             videoGenerationState.Save();
 
@@ -315,17 +822,6 @@ namespace iviewer.Services
         public void Dispose()
         {
             _httpClient?.Dispose();
-        }
-    }
-
-    // Not used?
-    public class VideoExportService
-    {
-        private readonly VideoGenerationConfig _config;
-
-        public VideoExportService(VideoGenerationConfig config)
-        {
-            _config = config;
         }
     }
 
@@ -512,14 +1008,6 @@ namespace iviewer.Services
 
     public class FileManagementService
     {
-        private readonly string _tempDir;
-
-        public FileManagementService(VideoGenerationConfig _config)
-        {
-            _tempDir = _config.TempDir;
-            Directory.CreateDirectory(_tempDir);
-        }
-
         public static void CleanupTempFiles(List<string> tempFiles)
         {
             foreach (string file in tempFiles.Where(File.Exists))
@@ -535,12 +1023,10 @@ namespace iviewer.Services
             }
         }
 
-        public string GetTempFilePath(string extension = ".tmp")
+        public static string GetTempFilePath(string extension = ".tmp")
         {
-            return Path.Combine(_tempDir, Path.GetRandomFileName() + extension);
+            return Path.Combine(VideoGenerationConfig.TempFileDir, Path.GetRandomFileName() + extension);
         }
-
-        public string TempDir => _tempDir;
     }
 
     public class UIUpdateService

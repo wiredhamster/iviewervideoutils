@@ -12,15 +12,13 @@ namespace iviewer.Video
     {
         public bool Running { get; private set; } = false;
 
-        private readonly VideoGenerationConfig _config;
         private readonly VideoGenerationService _generationService;
 
         public QueueForm()
         {
             InitializeComponent();
 
-            _config = new VideoGenerationConfig();
-            _generationService = new VideoGenerationService(_config);
+            _generationService = new VideoGenerationService();
 
             SyncStates();
             LoadVideos();
@@ -189,11 +187,11 @@ ORDER BY v.CreatedDate, c.OrderIndex";
                 {
                     // Process queue (e.g., all 'Queued' clips from DB)
                     string sql = @"
-SELECT TOP 1 c.PK, c.VideoGenerationStatePK 
+SELECT c.PK, c.VideoGenerationStatePK, CASE WHEN v.Status = 'Export' THEN 1 ELSE 0 END AS Priority
 FROM ClipGenerationStates c
     JOIN VideoGenerationStates v ON c.VideoGenerationStatePK = v.PK
 WHERE c.Status = 'Queued' OR v.Status = 'Export'
-ORDER BY v.CreatedDate, c.OrderIndex";
+ORDER BY Priority, v.CreatedDate, c.OrderIndex";
                     var dt = DB.SelectSingle(sql);
                     if (!dt.ContainsKey("PK")) break;
 
@@ -311,13 +309,17 @@ ORDER BY v.CreatedDate, c.OrderIndex";
             // On success:
             if (File.Exists(result))
             {
+                video.TempFiles += "," + result;
+
                 clipState.Status = "Generated";
 
                 var sql = $"SELECT TOP 1 * From ClipGenerationStates WHERE VideoGenerationStatePK = {DB.FormatDBValue(clipState.VideoGenerationStatePK)} AND OrderIndex = {DB.FormatDBValue(clipState.OrderIndex + 1)}";
                 var nextClip = ClipGenerationState.Load(sql);
                 if (nextClip != null && nextClip.ImagePath == "")
                 {
-                    var lastFrame = VideoUtils.ExtractLastFrame(result, _config.TempDir, true);
+                    var lastFrame = VideoUtils.ExtractLastFrame(result, VideoGenerationConfig.TempFileDir, true);
+                    video.TempFiles += "," + lastFrame;
+
                     nextClip.ImagePath = lastFrame;
                     nextClip.Save();
 
@@ -330,6 +332,7 @@ ORDER BY v.CreatedDate, c.OrderIndex";
             }
 
             clipState.Save();
+            video.Save();
             EventBus.RaiseClipStatusChanged(clipState.PK, video.PK, clipState.Status);
             UpdateVideoState(clipState.VideoGenerationStatePK);
         }
@@ -355,11 +358,8 @@ ORDER BY v.CreatedDate, c.OrderIndex";
 
             EventBus.RaiseVideoStatusChanged(videoGenerationState.PK, "Exporting");
 
-            var generationService = new VideoGenerationService(_config);
-
-            var clipsToExport = videoGenerationState.ClipGenerationStates.Where(c => !string.IsNullOrEmpty(c.VideoPath)).OrderBy(c => c.OrderIndex).ToList();
-
-            var path = await generationService.StitchVideos(clipsToExport, true);
+            var generationService = new VideoGenerationService();
+            var path = await generationService.ExportVideo(videoGenerationState);
             videoGenerationState.TempFiles = videoGenerationState.TempFiles + "," + path;
 
             try
@@ -370,9 +370,8 @@ ORDER BY v.CreatedDate, c.OrderIndex";
                 }
 
                 string filename = DateTime.Now.ToString("yyyyMMdd-HHmmss");
-                string tempPath = Path.Combine(_config.TempDir, filename + ".mp4");
                 string exportPath = Path.Combine(
-                    _config.ExportDir,
+                    VideoGenerationConfig.ExportDir,
                     filename + ".mp4");
                 string metaPath = Path.Combine(
                     Path.GetDirectoryName(exportPath) ?? "",
@@ -381,22 +380,14 @@ ORDER BY v.CreatedDate, c.OrderIndex";
                 // Ensure export directory exists
                 Directory.CreateDirectory(Path.GetDirectoryName(exportPath) ?? "");
 
-                // Apply upscaling and interpolation to the stitched video
-                bool success = await VideoUtils.UpscaleAndInterpolateVideoAsync(path, tempPath);
-
-                if (!success)
-                {
-                    throw new Exception("Video upscaling and interpolation failed");
-                }
-
                 // Export metadata
-                await ExportMetadataAsync(GenerateClipInfos(clipsToExport), metaPath);
+                await ExportMetadataAsync(GenerateClipInfos(videoGenerationState.ClipGenerationStates), metaPath);
 
                 // Copy to final location
-                File.Copy(tempPath, exportPath, overwrite: true);
+                File.Copy(path, exportPath, overwrite: true);
 
                 // Cleanup temp file
-                File.Delete(tempPath);
+                File.Delete(path);
 
                 videoGenerationState.Status = "Exported";
                 videoGenerationState.Save();
@@ -508,6 +499,13 @@ ORDER BY v.CreatedDate, c.OrderIndex";
                     if ((Guid)row.Tag == clipPK) // Assuming Tag = PK
                     {
                         row.Cells["Status"].Value = newStatus;
+                        row.Cells["ModifiedDate"].Value = clip.ModifiedDate;
+
+                        if (File.Exists(clip.ImagePath))
+                        {
+                            row.Cells["Image"].Value = ImageHelper.CreateThumbnail(clip.ImagePath, null, 160);
+                        }
+
                         found = true;
                         break;
                     }
@@ -609,6 +607,7 @@ ORDER BY v.CreatedDate, c.OrderIndex";
                 {
                     found = true;
                     row.Cells["Status"].Value = status;
+                    row.Cells["ModifiedDate"].Value = video.ModifiedDate;
                     break;
                 }
             }
