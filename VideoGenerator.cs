@@ -1,4 +1,5 @@
-﻿using FFMpegCore.Enums;
+﻿using FFMpegCore;
+using FFMpegCore.Enums;
 using iviewer.Helpers;
 using iviewer.Services;
 using iviewer.Video;
@@ -240,7 +241,7 @@ namespace iviewer
             }
             else if (rowIndex > 0 && RowClipState(rowIndex - 1).VideoPath != "")
             {
-                string framePath = VideoUtils.ExtractLastFrame(RowClipState(rowIndex - 1).VideoPath, VideoGenerationConfig.TempFileDir, true);
+                string framePath = VideoUtils.ExtractLastFrame(RowClipState(rowIndex - 1).VideoPath, _videoGenerationState.TempDir, true);
                 if (!string.IsNullOrEmpty(framePath) && File.Exists(framePath))
                 {
                     RowClipState(rowIndex).ImagePath = framePath;
@@ -450,7 +451,7 @@ namespace iviewer
 
             try
             {
-                string framePath = VideoUtils.ExtractLastFrame(videoPath, VideoGenerationConfig.TempFileDir, true);
+                string framePath = VideoUtils.ExtractLastFrame(videoPath, _videoGenerationState.TempDir, true);
                 if (!string.IsNullOrEmpty(framePath) && File.Exists(framePath))
                 {
                     // Determine target row (next row if exists, otherwise current)
@@ -497,7 +498,7 @@ namespace iviewer
             // Load Full Video tab
             if (!string.IsNullOrEmpty(_previewVideoPath) && File.Exists(_previewVideoPath))
             {
-                LoadVideoInPlayer(videoPlayerFull, _previewVideoPath, ref _fullStream);
+                LoadVideoInPlayer(videoPlayerFull, _previewVideoPath, ref _fullStream, loop: true);
             }
 
             // Load Per-Prompt Videos tab
@@ -542,6 +543,8 @@ namespace iviewer
 
             // Adjust video player size to accommodate flow panel
             videoPlayerPerPrompt.Size = new Size(986, tabPagePerPrompt.Height - 400);
+
+            CheckStates();
         }
 
         FlowLayoutPanel CreateVideoButtonsPanel(
@@ -553,6 +556,7 @@ namespace iviewer
         {
             var flowPanel = new FlowLayoutPanel
             {
+                Name = "FlowPanel",
                 Dock = DockStyle.Bottom,
                 Height = 395,
                 AutoScroll = true,
@@ -683,31 +687,16 @@ namespace iviewer
             }
         }
 
-        private void LoadVideoInPlayer(VideoPlayerControl player, string videoPath, ref FileStream streamRef, double speed = 1)
+        private void LoadVideoInPlayer(VideoPlayerControl player, string videoPath, ref FileStream streamRef, double speed = 1, bool loop = false)
         {
             try
             {
-                player.StopAndHide();
-
-                // Dispose previous stream
-                streamRef?.Dispose();
-                streamRef = null;
-
-                if (string.IsNullOrEmpty(videoPath))
+                if (string.IsNullOrEmpty(videoPath) || !File.Exists(videoPath))
                 {
                     return;
                 }
 
-                // Normalize path
-                string normalizedPath = Path.GetFullPath(videoPath);
-                normalizedPath = normalizedPath.Replace(@"\\", @"\");
-                normalizedPath = normalizedPath.Replace("\\\\", "\\");
-                normalizedPath = normalizedPath.Replace("\\", "/");
-
-                // Create new stream and assign
-                streamRef = new FileStream(normalizedPath, FileMode.Open, FileAccess.Read);
-                player.VideoStream = streamRef;
-                player.SetSpeed(speed);
+                player.Play(videoPath, speed, loop);
 
                 btnExport.BringToFront();
                 UpdateButtonStates();
@@ -767,6 +756,11 @@ namespace iviewer
 
             try
             {
+                // Ensure states are set correctly
+                CheckStates();
+
+                _videoGenerationState.Save();
+
                 _previewVideoPath = await _generationService.StitchVideos(_videoGenerationState, false);
 
                 if (!string.IsNullOrEmpty(_previewVideoPath))
@@ -793,6 +787,42 @@ namespace iviewer
             {
                 SetPreviewButtonState(false, "Preview");
                 SetExportButtonState(false, "Export");
+            }
+        }
+
+        // Debug method to check states
+        void CheckStates()
+        {
+            for (var i = 0; i < dgvPrompts.Rows.Count; i++)
+            {
+                var rowClip = RowClipState(i);
+                var videoClip = _videoGenerationState.ClipGenerationStates.FirstOrDefault(c => c.OrderIndex == i);
+                if (!object.ReferenceEquals(rowClip, videoClip))
+                {
+                    // Why are they different?
+                    //throw new Exception("Row clip state != Video clip state");
+                }
+
+                var row = dgvPrompts.Rows[i];
+                if ((row.Cells["colPrompt"].Value != null && row.Cells["colPrompt"].Value != rowClip.Prompt)
+                    || (row.Cells["colQueue"].Value != "Requeue" && rowClip.Status != "Requeue" && !string.Equals(row.Cells["colQueue"].Value.ToString(), rowClip.Status, StringComparison.OrdinalIgnoreCase)))
+                {
+                    //throw new Exception("Row != Clip");
+                }
+
+                if (tabControl.SelectedIndex == 1)
+                {
+                    var flowPanel = tabPagePerPrompt.Controls.Find("FlowPanel", true)[0] as FlowLayoutPanel;
+                    var clipControl = flowPanel.Controls.OfType<ClipControl>().FirstOrDefault(c => (int)c.Tag == i);
+                    if (clipControl.txtAddFrames.Text != rowClip.TransitionAddFrames.ToString()
+                        || clipControl.cboEffect.Text != rowClip.TransitionType.ToString()
+                        || clipControl.txtDropFrames.Text != rowClip.TransitionDropFrames.ToString()
+                        || clipControl.txtLength.Text != rowClip.TransitionDuration.ToString()
+                        || clipControl.txtSpeed.Text != rowClip.ClipSpeed.ToString())
+                    {
+                        throw new Exception("ClipControl != Clip");
+                    }
+                }
             }
         }
 
@@ -864,6 +894,9 @@ namespace iviewer
                 _videoGenerationState.Save();
 
                 UpdateUI();
+
+                CheckStates();
+
                 MessageBox.Show($"{imported.Count} videos imported. Total videos: {VideoRows.Count()}");
             }
         }
@@ -1020,6 +1053,11 @@ namespace iviewer
                 return;
             }
 
+            if (videoPK != _videoGenerationStatePK)
+            {
+                return;
+            }
+
             if (_isEditing)
             {
                 // Skip refresh during edit (or queue: store pending {clipPK, newStatus}, apply on _isEditing=false)
@@ -1102,52 +1140,81 @@ namespace iviewer
 
         private void HandleImageSelection(int rowIndex)
         {
-            using var ofd = new OpenFileDialog { Filter = "Media|*.png;*.jpg;*.jpeg;*.mp4" };
+            var startDir = _videoGenerationState.ClipGenerationStates.Any(c => !string.IsNullOrEmpty(c.ImagePath))
+                ? _videoGenerationState.TempDir
+                : VideoGenerationConfig.ImportDir;
+
+            // Check if this row was previously generated
+            bool wasGenerated = dgvPrompts.Rows[rowIndex].Cells["colQueue"].Value?.ToString() == "Generated";
+            string filePath = "";
+
+            using var ofd = new OpenFileDialog { Filter = "Media|*.png;*.jpg;*.jpeg;*.mp4", InitialDirectory = startDir };
             if (ofd.ShowDialog() == DialogResult.OK)
             {
-                // Check if this row was previously generated
-                bool wasGenerated = dgvPrompts.Rows[rowIndex].Cells["colQueue"].Value?.ToString() == "Generated";
-                string thumbnailPath = ofd.FileName;
-                if (Path.GetExtension(ofd.FileName).ToLower() == ".mp4")
+                if (ofd.FileName.StartsWith(_videoGenerationState.TempDir, StringComparison.OrdinalIgnoreCase))
                 {
-                    // Extract first frame for video
-                    thumbnailPath = VideoUtils.ExtractFirstFrame(ofd.FileName, VideoGenerationConfig.TempFileDir, true);
-                    _tempFiles.Add(thumbnailPath);
-                    RowClipState(rowIndex).VideoPath = ofd.FileName;
-                    wasGenerated = true;
+                    filePath = ofd.FileName;
                 }
-
-                dgvPrompts.Rows[rowIndex].Cells["colImage"].Value = ImageHelper.CreateThumbnail(thumbnailPath, null, 160);
-                RowClipState(rowIndex).ImagePath = thumbnailPath;
-
-                // Is there a metadata file? If so, we want to add it to temp files for deletion later.
-                var metadataFile = Path.Combine(Path.GetDirectoryName(ofd.FileName), Path.GetFileNameWithoutExtension(ofd.FileName) + ".txt");
-                if (File.Exists(metadataFile))
+                else
                 {
-                    _tempFiles.Add(metadataFile);
-                }
-
-                // If it was previously generated, mark for regeneration
-                if (wasGenerated)
-                {
-                    _updatingRowStatus = true;
-                    try
+                    filePath = Path.Combine(_videoGenerationState.TempDir, Path.GetFileName(ofd.FileName));
+                    if (File.Exists(filePath))
                     {
-                        dgvPrompts.Rows[rowIndex].Cells["colQueue"].Value = "Requeue";
-                        var generateCell = dgvPrompts.Rows[rowIndex].Cells["colQueue"];
-                        generateCell.Style.BackColor = Color.LightYellow;
-                        generateCell.Style.ForeColor = Color.DarkOrange;
+                        filePath = Path.Combine(_videoGenerationState.TempDir, Guid.NewGuid().ToString() + Path.GetExtension(filePath));
                     }
-                    finally
+
+                    File.Move(ofd.FileName, filePath);
+
+                    // Is there a metadata file? If so, we want to add it to temp files for deletion later.
+                    var metadataFile = Path.Combine(Path.GetDirectoryName(ofd.FileName), Path.GetFileNameWithoutExtension(ofd.FileName) + ".txt");
+                    if (File.Exists(metadataFile))
                     {
-                        _updatingRowStatus = false;
+                        File.Move(metadataFile, Path.Combine(_videoGenerationState.TempDir, Path.GetFileName(metadataFile)));
                     }
                 }
-
-                UpdateButtonStates();
-                UpdateResolutionLabel();
-                RefreshPreviewIfOpen();
             }
+            else
+            {
+                return;
+            }
+
+            var imagePath = "";
+            if (Path.GetExtension(filePath).ToLower() == ".mp4")
+            {
+                // Extract first frame for video
+                imagePath = VideoUtils.ExtractFirstFrame(ofd.FileName, VideoGenerationConfig.TempFileDir, true);
+                _tempFiles.Add(imagePath);
+                RowClipState(rowIndex).VideoPath = ofd.FileName;
+                wasGenerated = true;
+            }
+            else
+            {
+                imagePath = filePath;
+            }
+
+            dgvPrompts.Rows[rowIndex].Cells["colImage"].Value = ImageHelper.CreateThumbnail(imagePath, null, 160);
+            RowClipState(rowIndex).ImagePath = imagePath;
+
+            // If it was previously generated, mark for regeneration
+            if (wasGenerated)
+            {
+                _updatingRowStatus = true;
+                try
+                {
+                    dgvPrompts.Rows[rowIndex].Cells["colQueue"].Value = "Requeue";
+                    var generateCell = dgvPrompts.Rows[rowIndex].Cells["colQueue"];
+                    generateCell.Style.BackColor = Color.LightYellow;
+                    generateCell.Style.ForeColor = Color.DarkOrange;
+                }
+                finally
+                {
+                    _updatingRowStatus = false;
+                }
+            }
+
+            UpdateButtonStates();
+            UpdateResolutionLabel();
+            RefreshPreviewIfOpen();
         }
 
         private void HandleLoraSelection(int rowIndex)
@@ -1385,7 +1452,7 @@ namespace iviewer
             btnPlayAll.Text = "Stop All";
             btnPlayAll.BackColor = Color.LightCoral;
 
-            PlayNextVideoInSequence(speedFactor);
+            PlayNextVideoInSequence(speedFactor, null);
         }
 
         private void StopPlayAllSequence()
@@ -1402,7 +1469,7 @@ namespace iviewer
             videoPlayerPerPrompt?.StopAndHide();
         }
 
-        private async void PlayNextVideoInSequence(double speedFactor)
+        private async void PlayNextVideoInSequence(double speedFactor, Task<IMediaAnalysis> infoTask)
         {
             if (!_isPlayingAll || _currentPlayAllIndex >= _playAllVideos.Count)
             {
@@ -1427,17 +1494,34 @@ namespace iviewer
                     LoadVideoInPlayer(videoPlayerPerPrompt, clipState.VideoPath, ref _perPromptStream, clipState.ClipSpeed * speedFactor);
 
                     // Get video duration and wait for it to complete
-                    double videoDuration = VideoUtils.GetVideoDuration(clipState.VideoPath) / (clipState.ClipSpeed * speedFactor);
+                    var info = (IMediaAnalysis)null;
+                    if (infoTask != null)
+                    {
+                        info = await infoTask;
+                    }
+                    else
+                    {
+                        info = FFProbe.Analyse(clipState.VideoPath);
+                    }
 
-                    // Wait for video to complete (with small buffer)
-                    await Task.Delay(TimeSpan.FromSeconds(videoDuration + 0.2));
+                    var frameTime = 1.0 / info.PrimaryVideoStream.FrameRate;
+                    double videoDuration = (info.Duration.TotalSeconds - (frameTime * clipState.TransitionDropFrames)) / (clipState.ClipSpeed * speedFactor);
+
+                    // Create task to get info for next video
+                    var nextClipState = _playAllVideos.Count > _currentPlayAllIndex + 1 ? _playAllVideos[_currentPlayAllIndex + 1] : null;
+                    if (nextClipState != null && File.Exists(nextClipState.VideoPath))
+                    {
+                        infoTask = FFProbe.AnalyseAsync(nextClipState.VideoPath);
+                    }
+
+                    await Task.Delay(TimeSpan.FromSeconds(videoDuration));
                 }
 
                 // Move to next video if still playing all
                 if (_isPlayingAll)
                 {
                     _currentPlayAllIndex++;
-                    PlayNextVideoInSequence(speedFactor);
+                    PlayNextVideoInSequence(speedFactor, infoTask);
                 }
             }
             catch (Exception ex)
@@ -1447,7 +1531,7 @@ namespace iviewer
                 if (_isPlayingAll)
                 {
                     _currentPlayAllIndex++;
-                    PlayNextVideoInSequence(speedFactor);
+                    PlayNextVideoInSequence(speedFactor, null);
                 }
             }
         }
@@ -1619,6 +1703,8 @@ namespace iviewer
                     dgvPrompts.Rows[rowIndex].Cells["colQueue"].Value = clipState.Status;
                 }
             }
+
+            CheckStates();
         }
 
         #endregion
@@ -1721,7 +1807,8 @@ namespace iviewer
         public static string InterpolateWorkflowFileStem => "interpolated_";
         public static string UpscaleWorkflowPath => @"C:\Users\sysadmin\Documents\ComfyUI\user\default\workflows\iviewer\Upscale - API.json";
         public static string UpscaleWorkflowFileStem => "upscaled_";
-        public static string ExportDir { get; set; } = @"D:\Users\sysadmin\Archive\Visual Studio Projects\SD-Processed";
+        public static string ImportDir => @"D:\Users\sysadmin\Archive\Visual Studio Projects\SD-Process";
+        public static string ExportDir => @"D:\Users\sysadmin\Archive\Visual Studio Projects\SD-Processed";
     }
 
     #endregion

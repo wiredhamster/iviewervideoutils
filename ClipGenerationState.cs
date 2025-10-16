@@ -230,6 +230,40 @@ namespace iviewer
 
         #endregion
 
+        #region Non-persistent properties
+
+        public string TempDir
+        {
+            get
+            {
+                if (tempDir == null)
+                {
+                    tempDir = Path.Combine(VideoGenerationConfig.TempFileDir, VideoGenerationStatePK.ToString());
+                    Directory.CreateDirectory(tempDir);
+                }
+
+                return tempDir;
+            }
+        }
+        string tempDir;
+
+        public string WorkingDir
+        {
+            get
+            {
+                if (workingDir == null)
+                {
+                    workingDir = Path.Combine(TempDir, "working");
+                    Directory.CreateDirectory(workingDir);
+                }
+
+                return workingDir;
+            }
+        }
+        string workingDir;
+
+        #endregion
+        
         #region Loading / Saving
 
         protected override void FillFromDictionary(Dictionary<string, object> dic)

@@ -74,12 +74,14 @@ namespace iviewer
         {
             // Re-encode all inputs to normalize PTS before concatenating
             var normalizedPaths = new List<string>();
-            string tempDir = VideoGenerationConfig.TempFileDir;
+            string tempDir = Path.GetDirectoryName(outputPath);
 
             try
             {
                 var firstInfo = await FFProbe.AnalyseAsync(paths[0]);
                 double fps = firstInfo.PrimaryVideoStream.FrameRate;
+                int width = firstInfo.PrimaryVideoStream.Width;
+                int height = firstInfo.PrimaryVideoStream.Height;
 
                 // Normalize each video (reset PTS, ensure consistent encoding)
                 for (int i = 0; i < paths.Count; i++)
@@ -101,27 +103,88 @@ namespace iviewer
                     normalizedPaths.Add(normalizedPath);
                 }
 
-                // Now concatenate the normalized videos
-                string listFile = Path.Combine(tempDir, Guid.NewGuid().ToString() + ".txt");
-                using (var writer = new StreamWriter(listFile))
+                var highQuality = true;
+                if (highQuality)
                 {
-                    foreach (var path in normalizedPaths)
+                    // Calculate keyframe positions (duration of each clip)
+                    var durations = new List<double>();
+                    double cumulativeDuration = 0;
+                    var keyframePositions = new List<double>();
+
+                    for (int i = 0; i < normalizedPaths.Count; i++)
                     {
-                        writer.WriteLine($"file '{Path.GetFullPath(path).Replace("\\", "/")}'");
+                        var info = await FFProbe.AnalyseAsync(normalizedPaths[i]);
+                        double duration = info.Duration.TotalSeconds;
+                        durations.Add(duration);
+
+                        // Keyframe at the start of each clip (except the first which starts at 0)
+                        keyframePositions.Add(cumulativeDuration);
+                        cumulativeDuration += duration;
                     }
+
+                    // Build keyframe expression (e.g., "expr:eq(t,0)+eq(t,5.0)+eq(t,10.0)")
+                    string keyframeExpr = "expr:" + string.Join("+", keyframePositions.Select(t => $"gte(t,{t:F3})"));
+
+                    // Build filter complex that resets PTS for each input
+                    var filterParts = new List<string>();
+
+                    for (int i = 0; i < paths.Count; i++)
+                    {
+                        filterParts.Add($"[{i}:v]setpts=PTS-STARTPTS,fps={fps},scale={width}:{height}:flags=lanczos[v{i}]");
+                    }
+
+                    string concatInputs = string.Join("", Enumerable.Range(0, paths.Count).Select(i => $"[v{i}]"));
+                    filterParts.Add($"{concatInputs}concat=n={paths.Count}:v=1:a=0[outv]");
+
+                    string filterComplex = string.Join(";", filterParts);
+
+                    var ffmpegArgs = FFMpegArguments.FromFileInput(paths[0]);
+                    for (int i = 1; i < paths.Count; i++)
+                    {
+                        ffmpegArgs = ffmpegArgs.AddFileInput(paths[i]);
+                    }
+
+                    var result = await ffmpegArgs
+                        .OutputToFile(outputPath, true, options => options
+                            .WithCustomArgument($"-filter_complex \"{filterComplex}\"")
+                            .WithCustomArgument("-map [outv]")
+                            .WithVideoCodec("libx264")
+                            .WithConstantRateFactor(18)
+                            .WithCustomArgument("-preset medium")
+                            .WithCustomArgument($"-r {fps}")
+                            .WithCustomArgument($"-force_key_frames \"{keyframeExpr}\"") // Force keyframes at clip boundaries
+                            .WithCustomArgument("-pix_fmt yuv420p")
+                            .WithCustomArgument("-an")
+                            .WithCustomArgument("-y"))
+                        .ProcessAsynchronously();
+
+                    if (!result)
+                        throw new Exception("FFmpeg concat filter failed");
                 }
+                else
+                {
+                    // Now concatenate the normalized videos
+                    string listFile = Path.Combine(tempDir, Guid.NewGuid().ToString() + ".txt");
+                    using (var writer = new StreamWriter(listFile))
+                    {
+                        foreach (var path in normalizedPaths)
+                        {
+                            writer.WriteLine($"file '{Path.GetFullPath(path).Replace("\\", "/")}'");
+                        }
+                    }
 
-                await FFMpegArguments
-                    .FromFileInput(listFile, false, inputOptions => inputOptions
-                        .ForceFormat("concat")
-                        .WithCustomArgument("-safe 0"))
-                    .OutputToFile(outputPath, true, options => options
-                        .WithVideoCodec("copy") // Can safely copy now
-                        .WithCustomArgument("-an")
-                        .WithCustomArgument("-y"))
-                    .ProcessAsynchronously();
+                    await FFMpegArguments
+                        .FromFileInput(listFile, false, inputOptions => inputOptions
+                            .ForceFormat("concat")
+                            .WithCustomArgument("-safe 0"))
+                        .OutputToFile(outputPath, true, options => options
+                            .WithVideoCodec("copy") // Can safely copy now
+                            .WithCustomArgument("-an")
+                            .WithCustomArgument("-y"))
+                        .ProcessAsynchronously();
 
-                File.Delete(listFile);
+                    File.Delete(listFile);
+                }
             }
             finally
             {
@@ -129,13 +192,9 @@ namespace iviewer
                 foreach (var path in normalizedPaths)
                 {
                     if (File.Exists(path))
-                        File.Delete(path);
-                }
-
-                foreach (var path in paths)
-                {
-                    if (File.Exists(path))
-                        File.Delete(path);
+                    {
+                        try { File.Delete(path); } catch { }
+                    }
                 }
             }
         }
@@ -346,7 +405,7 @@ namespace iviewer
             }
             else
             {
-                tempOutput = Path.Combine(VideoGenerationConfig.TempFileDir, "speed_" + Guid.NewGuid().ToString() + ".mp4");
+                tempOutput = Path.Combine(Path.GetDirectoryName(inputPath), "speed_" + Guid.NewGuid().ToString() + ".mp4");
 
                 // Build custom filter string
                 string vfArg = $"setpts=PTS/{speed}";

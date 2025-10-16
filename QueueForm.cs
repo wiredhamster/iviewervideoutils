@@ -22,7 +22,7 @@ namespace iviewer.Video
 
             SyncStates();
             LoadVideos();
-            LoadClips();
+            LoadClips(); // NB: this is slow because of all the thumbnail loading. Can maybe try to do it on scroll.
 
             // Subscribe to events
             //EventBus.ClipQueued += OnClipQueued;
@@ -186,11 +186,12 @@ ORDER BY v.CreatedDate, c.OrderIndex";
                 while (true)
                 {
                     // Process queue (e.g., all 'Queued' clips from DB)
-                    string sql = @"
-SELECT c.PK, c.VideoGenerationStatePK, CASE WHEN v.Status = 'Export' THEN 1 ELSE 0 END AS Priority
+                    // Prioritise any clips or videos which are stuck in 'Exporting' or 'Generating' from a previous run.
+                    var sql = @"
+SELECT c.PK, c.VideoGenerationStatePK, CASE WHEN c.Status = 'Generating' THEN 0 WHEN v.Status = 'Exporting' THEN 1 WHEN c.Status = 'Queued' THEN 2 WHEN v.Status = 'Export' THEN 4 ELSE 5 END AS Priority
 FROM ClipGenerationStates c
     JOIN VideoGenerationStates v ON c.VideoGenerationStatePK = v.PK
-WHERE c.Status = 'Queued' OR v.Status = 'Export'
+WHERE c.Status IN ('Queued', 'Generating') OR v.Status IN ('Export', 'Exporting')
 ORDER BY Priority, v.CreatedDate, c.OrderIndex";
                     var dt = DB.SelectSingle(sql);
                     if (!dt.ContainsKey("PK")) break;
@@ -202,11 +203,11 @@ ORDER BY Priority, v.CreatedDate, c.OrderIndex";
                     var clipState = video.ClipGenerationStates.FirstOrDefault(c => c.PK == pk);
 
                     // Generate or Export
-                    if (video.Status == "Export")
+                    if (video.Status == "Export" || video.Status == "Exporting")
                     {
                         await ExportVideo(video);
                     }
-                    else if (clipState.Status == "Queued")
+                    else if (clipState.Status == "Queued" || clipState.Status == "Generating")
                     {
                         await GenerateVideo(clipState, video);
                     }
@@ -236,37 +237,44 @@ ORDER BY Priority, v.CreatedDate, c.OrderIndex";
             var video = VideoGenerationState.Load(pk);
             if (video != null)
             {
-                if (!video.ClipGenerationStates.Any())
+                if (video.Status == "Export" || video.Status == "Exporting")
                 {
-                    video.Delete();
-                    EventBus.RaiseVideoDeleted(pk, new HashSet<Guid>());
-                    return;
-                }
-                else if (video.ClipGenerationStates.Any(c => c.Status == "Failed"))
-                {
-                    video.Status = "Failed";
-                }
-                else if (video.ClipGenerationStates.Any(c => c.Status == "Generating"))
-                {
-                    video.Status = "Generating";
-                }
-                else if (video.ClipGenerationStates.Any(c => c.Status == "Queued"))
-                {
-                    video.Status = "Queued";
-                }
-                else if (video.ClipGenerationStates.Any(c => c.Status == "Generated") || video.ClipGenerationStates.Any(c => c.Status == "Requeue"))
-                {
-                    video.Status = "Generated";
+                    // Do not update video state from Clip states
                 }
                 else
                 {
-                    video.Status = "Unknown";
-                }
+                    if (!video.ClipGenerationStates.Any())
+                    {
+                        video.Delete();
+                        EventBus.RaiseVideoDeleted(pk, new HashSet<Guid>());
+                        return;
+                    }
+                    else if (video.ClipGenerationStates.Any(c => c.Status == "Failed"))
+                    {
+                        video.Status = "Failed";
+                    }
+                    else if (video.ClipGenerationStates.Any(c => c.Status == "Generating"))
+                    {
+                        video.Status = "Generating";
+                    }
+                    else if (video.ClipGenerationStates.Any(c => c.Status == "Queued"))
+                    {
+                        video.Status = "Queued";
+                    }
+                    else if (video.ClipGenerationStates.Any(c => c.Status == "Generated") || video.ClipGenerationStates.Any(c => c.Status == "Requeue"))
+                    {
+                        video.Status = "Generated";
+                    }
+                    else
+                    {
+                        video.Status = "Unknown";
+                    }
 
-                if (video.HasChanges)
-                {
-                    video.Save();
-                    EventBus.RaiseVideoStatusChanged(pk, video.Status);
+                    if (video.HasChanges)
+                    {
+                        video.Save();
+                        EventBus.RaiseVideoStatusChanged(pk, video.Status);
+                    }
                 }
             }
         }
@@ -317,7 +325,7 @@ ORDER BY Priority, v.CreatedDate, c.OrderIndex";
                 var nextClip = ClipGenerationState.Load(sql);
                 if (nextClip != null && nextClip.ImagePath == "")
                 {
-                    var lastFrame = VideoUtils.ExtractLastFrame(result, VideoGenerationConfig.TempFileDir, true);
+                    var lastFrame = VideoUtils.ExtractLastFrame(result, video.TempDir, true);
                     video.TempFiles += "," + lastFrame;
 
                     nextClip.ImagePath = lastFrame;
@@ -384,10 +392,7 @@ ORDER BY Priority, v.CreatedDate, c.OrderIndex";
                 await ExportMetadataAsync(GenerateClipInfos(videoGenerationState.ClipGenerationStates), metaPath);
 
                 // Copy to final location
-                File.Copy(path, exportPath, overwrite: true);
-
-                // Cleanup temp file
-                File.Delete(path);
+                File.Move(path, exportPath, overwrite: true);
 
                 videoGenerationState.Status = "Exported";
                 videoGenerationState.Save();
