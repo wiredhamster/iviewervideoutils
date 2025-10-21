@@ -1,63 +1,61 @@
-﻿using CefSharp.DevTools.LayerTree;
-using LibVLCSharp.Shared;
-using LibVLCSharp.WinForms;
-using System;
-using System.ComponentModel;
-using System.Diagnostics;
-using System.IO;
-using System.Security.Cryptography;
-using System.Windows.Forms;
-using static System.Windows.Forms.VisualStyles.VisualStyleElement;
+﻿using System.Diagnostics;
 
 namespace iviewer
 {
 	public partial class VideoPlayerControl : UserControl
 	{
-		VideoView videoView;
-		SafeMediaPlayer mediaPlayer;
+		SafeWindowsMediaPlayer _player;
+        private Panel _videoPanel;
 
-		public VideoPlayerControl()
+        public VideoPlayerControl()
 		{
 			InitializeComponent();
-		}
+
+            // Create video panel
+            _videoPanel = new Panel
+            {
+                Dock = DockStyle.Fill,
+                BackColor = Color.Black
+            };
+            this.Controls.Add(_videoPanel);
+
+            // Initialize player
+            _player = new SafeWindowsMediaPlayer(_videoPanel);
+            //_player.VideoFinished += (s, e) => MessageBox.Show("Video finished!");
+            //_player.ErrorOccurred += (s, msg) => MessageBox.Show($"Error: {msg}");
+
+            this.ResumeLayout();
+        }
 
 		public bool Loop { get; set; } = true;
 
 		private void InitializeComponent()
 		{
-			this.SuspendLayout();
-            mediaPlayer = new SafeMediaPlayer();
-			videoView = new VideoView();
-			videoView.MediaPlayer = mediaPlayer.InternalMediaPlayer;
-            videoView.Dock = DockStyle.Fill;
-			this.Controls.Add(videoView);
-
-			//
+			SuspendLayout();
+			// 
 			// VideoPlayerControl
-			//
-			this.AutoScaleDimensions = new System.Drawing.SizeF(6F, 13F);
-			this.AutoScaleMode = System.Windows.Forms.AutoScaleMode.Font;
-			this.Name = "VideoPlayerControl";
-			this.Size = new System.Drawing.Size(300, 300);
-			this.ResumeLayout(false);
-			//mediaPlayer.EnableKeyInput = false;
+			// 
+			DoubleBuffered = true;
+			Name = "VideoPlayerControl";
+			ResumeLayout(false);
 		}
 
 		public void Play(Stream stream, double speed = 1, bool loop = false)
 		{
-			mediaPlayer.Play(stream, speed, loop);
+			// No stream support I imagine.
+            // _player.PlayAsync()
 		}
 
 		public void Play(string path, double speed = 1, bool loop = false)
 		{
-			mediaPlayer.Play(path, speed, loop);
+			_player.PlayAsync(path, (float)speed, loop);
 		}
 
         public async Task StopAndHide()
         {
             try
             {
-				mediaPlayer.Stop();
+				_player.Stop();
             }
             catch (Exception ex)
             {

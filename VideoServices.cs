@@ -410,22 +410,27 @@ namespace iviewer.Services
         // And should also be able to deal with images
         private string FindGeneratedVideo(string outputDir)
         {
-            var tempVideos = Directory.GetFiles(VideoGenerationConfig.ComfyOutputDir, "*.mp4")
+            var tempVideo = Directory.GetFiles(VideoGenerationConfig.ComfyOutputDir, "*.mp4")
                 .Select(f => new { Path = f, Time = File.GetCreationTime(f) })
                 .OrderByDescending(x => x.Time)
                 .FirstOrDefault();
 
-            if (tempVideos == null)
+            if (tempVideo == null)
             {
                 throw new Exception("No video found in temp directory after completion");
             }
 
-            string uniqueName = $"video_{Guid.NewGuid().ToString()}.mp4";
+            var extension = Path.GetExtension(tempVideo.Path).ToLower();
+            var prefix = extension == ".mp4" ? "video"
+                : new[] { ".png", ".jpg", ".jpeg" }.Contains(extension) ? "image"
+                : "output";
+
+            string uniqueName = $"{prefix}_{Guid.NewGuid().ToString()}.mp4";
             string finalPath = Path.Combine(outputDir, uniqueName);
-            File.Move(tempVideos.Path, finalPath);
+            File.Move(tempVideo.Path, finalPath);
 
             // Delete any associated .png file.
-            var pngFile = Path.Combine(Path.GetDirectoryName(tempVideos.Path), Path.GetFileNameWithoutExtension(tempVideos.Path) + ".png");
+            var pngFile = Path.Combine(Path.GetDirectoryName(tempVideo.Path), Path.GetFileNameWithoutExtension(tempVideo.Path) + ".png");
             if (File.Exists(pngFile))
             {
                 File.Delete(pngFile);
@@ -464,38 +469,30 @@ namespace iviewer.Services
                 // Create junction segments
                 for (int i = 0; i < clipStates.Count; i++)
                 {
-                    if (i < clipStates.Count - 1)
+                    var currentState = clipStates[i];
+                    var videoClip = clipStates[i].VideoPath;
+                    string processedClip = await ProcessClipForJunction(videoClip, currentState, highQuality, tempFiles);
+                    if (processedClip != videoClip)
                     {
-                        var currentState = clipStates[i];
-                        var videoClip = clipStates[i].VideoPath;
-                        string processedClip = await ProcessClipForJunction(videoClip, currentState, highQuality, tempFiles);
-                        if (processedClip != videoClip)
-                        {
-                            tempFiles.Add(processedClip);
-                        }
+                        tempFiles.Add(processedClip);
+                    }
 
-                        string transitionSegment = await GenerateTransitionSegment(processedClip, clipStates[i + 1].VideoPath, currentState, highQuality, tempFiles);
-                        if (!string.IsNullOrEmpty(transitionSegment))
-                        {
-                            tempFiles.Add(transitionSegment);
+                    var nextClip = i == clipStates.Count - 1 ? clipStates[0] : clipStates[i + 1]; // Loop round if we're at the end
+                    string transitionSegment = await GenerateTransitionSegment(processedClip, nextClip.VideoPath, currentState, highQuality, tempFiles);
+                    if (!string.IsNullOrEmpty(transitionSegment))
+                    {
+                        tempFiles.Add(transitionSegment);
 
-                            var joinedClip = Path.Combine(video.WorkingDir, "joined_" + Guid.NewGuid().ToString() + ".mp4");
-                            await VideoUtils.ConcatenateVideoClipsAsync(new List<string> { processedClip, transitionSegment }, joinedClip);
+                        var joinedClip = Path.Combine(video.WorkingDir, "joined_" + Guid.NewGuid().ToString() + ".mp4");
+                        await VideoUtils.ConcatenateVideoClipsAsync(new List<string> { processedClip, transitionSegment }, joinedClip);
 
-                            tempFiles.Add(joinedClip);
+                        tempFiles.Add(joinedClip);
 
-                            processedClips.Add(joinedClip);
-                        }
-                        else
-                        {
-                            processedClips.Add(processedClip);
-                        }
+                        processedClips.Add(joinedClip);
                     }
                     else
                     {
-                        // Last clip
-                        // On balance it is better to ignore Drop Frames for the last clip. Otherwise we have to automatically handle deciding if drop frames are genuinely required, or just the default values
-                        processedClips.Add(clipStates[i].VideoPath);
+                        processedClips.Add(processedClip);
                     }
                 }
 

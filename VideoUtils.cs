@@ -458,7 +458,7 @@ namespace iviewer
                     throw new ArgumentException("Input video path cannot be empty");
 
                 var filename = Path.GetFileNameWithoutExtension(inputVideoPath);
-                string outputPath = Path.Combine(outputDirectory, $"{filename}_lastframe.png");
+                string outputPath = Path.Combine(outputDirectory, $"image_{filename}_lastframe.png");
 
                 if (string.IsNullOrWhiteSpace(outputPath))
                     throw new ArgumentException("Output path cannot be empty");
