@@ -58,6 +58,7 @@ namespace iviewer
 			btnPlayAll = new Button();
 			tabPageFullVideo = new TabPage();
 			btnExport = new Button();
+			btnExtractFrame = new Button();
 			tabControl.SuspendLayout();
 			tabPageGeneration.SuspendLayout();
 			((System.ComponentModel.ISupportInitialize)dgvPrompts).BeginInit();
@@ -258,6 +259,7 @@ namespace iviewer
 			// 
 			// tabPagePerPrompt
 			// 
+			tabPagePerPrompt.Controls.Add(btnExtractFrame);
 			tabPagePerPrompt.Controls.Add(btnPlay2x);
 			tabPagePerPrompt.Controls.Add(btnPreview);
 			tabPagePerPrompt.Controls.Add(btnImport);
@@ -284,7 +286,7 @@ namespace iviewer
 			// btnPreview
 			// 
 			btnPreview.Anchor = AnchorStyles.Top | AnchorStyles.Right;
-			btnPreview.Location = new Point(886, 93);
+			btnPreview.Location = new Point(884, 122);
 			btnPreview.Name = "btnPreview";
 			btnPreview.Size = new Size(100, 23);
 			btnPreview.TabIndex = 8;
@@ -295,7 +297,7 @@ namespace iviewer
 			// btnImport
 			// 
 			btnImport.Anchor = AnchorStyles.Top | AnchorStyles.Right;
-			btnImport.Location = new Point(886, 64);
+			btnImport.Location = new Point(884, 93);
 			btnImport.Name = "btnImport";
 			btnImport.Size = new Size(100, 23);
 			btnImport.TabIndex = 7;
@@ -335,6 +337,17 @@ namespace iviewer
 			btnExport.Text = "Export";
 			btnExport.UseVisualStyleBackColor = true;
 			btnExport.Click += btnExport_Click;
+			// 
+			// btnExtractFrame
+			// 
+			btnExtractFrame.Anchor = AnchorStyles.Top | AnchorStyles.Right;
+			btnExtractFrame.Location = new Point(884, 64);
+			btnExtractFrame.Name = "btnExtractFrame";
+			btnExtractFrame.Size = new Size(100, 23);
+			btnExtractFrame.TabIndex = 10;
+			btnExtractFrame.Text = "Extract Frame";
+			btnExtractFrame.UseVisualStyleBackColor = true;
+			btnExtractFrame.Click += btnExtractFrame_Click;
 			// 
 			// VideoGenerator
 			// 
@@ -481,12 +494,26 @@ namespace iviewer
 
         private async void btnPlayAll_Click(object sender, EventArgs e)
         {
-            StartPlayAllSequence();
-        }
+			if (_isPlayingAll)
+			{
+				videoPlayerPerPrompt.TogglePlayPause();
+			}
+			else
+			{
+				StartPlayAllSequence();
+			}
+		}
 
         private async void btnPlay2x_Click(object sender, EventArgs e)
         {
-            StartPlayAllSequence(2);
+			if (_isPlayingAll)
+			{
+				videoPlayerPerPrompt.TogglePlayPause();
+			}
+			else
+			{
+				StartPlayAllSequence(2);
+			}
         }
 
         private Button btnExport;
@@ -494,5 +521,6 @@ namespace iviewer
         private Button btnPlay2x;
         private Button btnMoveDown;
         private Button btnMoveUp;
-    }
+		private Button btnExtractFrame;
+	}
 }

@@ -94,6 +94,16 @@ namespace iviewer
 			}
 		}
 
+		public void TogglePlayPause()
+		{
+			_player.TogglePlayPause();
+		}
+
+		public async Task ExtractCurrentFrameAsync(string path)
+		{
+			await _player.ExtractCurrentFrameAsync(path);
+		}
+
 		protected override void Dispose(bool disposing)
 		{
 			if (disposing)

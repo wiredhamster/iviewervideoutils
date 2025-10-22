@@ -519,7 +519,7 @@ namespace iviewer
 
 			// Clear existing dynamic controls but keep the buttons and video player
 			var controlsToRemove = tabPagePerPrompt.Controls.OfType<Control>()
-				.Where(c => c != videoPlayerPerPrompt && c != btnPreview && c != btnImport && c != btnPlayAll && c != btnPlay2x)
+				.Where(c => c != videoPlayerPerPrompt && c != btnPreview && c != btnImport && c != btnPlayAll && c != btnPlay2x && c != btnExtractFrame)
 				.ToList();
 
 			foreach (var control in controlsToRemove)
@@ -537,6 +537,7 @@ namespace iviewer
 			btnImport.BringToFront();
 			btnPlayAll.BringToFront();
 			btnPlay2x.BringToFront();
+			btnExtractFrame.BringToFront();
 
 			// Adjust video player size to accommodate flow panel
 			videoPlayerPerPrompt.Size = new Size(btnPreview.Left - 10, tabPagePerPrompt.Height - 400);
@@ -548,7 +549,7 @@ namespace iviewer
 		   //List<VideoRowData> videoRows,
 		   //List<VideoClipInfo> clipInfos,
 		   Action<int, string, double> onVideoClick,
-		   Action<int, double, string, double, int, int> onTransitionChanged,
+		   Action<int, double, string, double, int, int, int> onTransitionChanged,
 		   List<ClipControl> clipControls = null)
 		{
 			var flowPanel = new FlowLayoutPanel
@@ -570,7 +571,8 @@ namespace iviewer
 				clipControl.btnClip.Text = $"Clip {i + 1}";
 				clipControl.cboEffect.Text = state.TransitionType;
 				clipControl.txtAddFrames.Text = state.TransitionAddFrames.ToString();
-				clipControl.txtDropFrames.Text = state.TransitionDropFrames.ToString();
+				clipControl.txtDropFirstFrames.Text = state.TransitionDropFirstFrames.ToString();
+				clipControl.txtDropLastFrames.Text = state.TransitionDropLastFrames.ToString();
 				clipControl.txtLength.Text = state.TransitionDuration.ToString();
 				clipControl.txtSpeed.Text = state.ClipSpeed.ToString();
 				clipControl.Tag = i;
@@ -614,14 +616,24 @@ namespace iviewer
 					}
 
 					// Validate drop frames
-					if (!int.TryParse(clipControl.txtDropFrames.Text, out int dropFrames) || dropFrames < 0)
+					if (!int.TryParse(clipControl.txtDropFirstFrames.Text, out int dropFirstFrames) || dropFirstFrames < 0)
 					{
-						clipControl.txtDropFrames.BackColor = Color.LightPink;
+						clipControl.txtDropFirstFrames.BackColor = Color.LightPink;
 						isValid = false;
 					}
 					else
 					{
-						clipControl.txtDropFrames.BackColor = Color.White;
+						clipControl.txtDropFirstFrames.BackColor = Color.White;
+					}
+
+					if (!int.TryParse(clipControl.txtDropLastFrames.Text, out int dropLastFrames) || dropLastFrames < 0)
+					{
+						clipControl.txtDropLastFrames.BackColor = Color.LightPink;
+						isValid = false;
+					}
+					else
+					{
+						clipControl.txtDropLastFrames.BackColor = Color.White;
 					}
 
 					// Validate add frames
@@ -639,7 +651,7 @@ namespace iviewer
 
 					if (isValid)
 					{
-						onTransitionChanged(currentIndex, speed, transitionType, duration, dropFrames, addFrames);
+						onTransitionChanged(currentIndex, speed, transitionType, duration, dropFirstFrames, dropLastFrames, addFrames);
 					}
 				};
 
@@ -647,7 +659,8 @@ namespace iviewer
 				clipControl.txtSpeed.TextChanged += changeHandler;
 				clipControl.cboEffect.SelectedIndexChanged += changeHandler;
 				clipControl.txtLength.TextChanged += changeHandler;
-				clipControl.txtDropFrames.TextChanged += changeHandler;
+				clipControl.txtDropFirstFrames.TextChanged += changeHandler;
+				clipControl.txtDropLastFrames.TextChanged += changeHandler;
 				clipControl.txtAddFrames.TextChanged += changeHandler;
 
 				if (i == dgvPrompts.RowCount - 1)
@@ -671,7 +684,7 @@ namespace iviewer
 			return flowPanel;
 		}
 
-		private void OnTransitionChanged(int clipIndex, double speed, string transitionType, double duration, int dropFrames, int addFrames)
+		private void OnTransitionChanged(int clipIndex, double speed, string transitionType, double duration, int dropFirstFrames, int dropLastFrames, int addFrames)
 		{
 			if (clipIndex >= 0)
 			{
@@ -679,7 +692,8 @@ namespace iviewer
 				state.ClipSpeed = speed;
 				state.TransitionType = transitionType;
 				state.TransitionDuration = duration;
-				state.TransitionDropFrames = dropFrames;
+				state.TransitionDropFirstFrames = dropFirstFrames;
+				state.TransitionDropLastFrames = dropLastFrames;
 				state.TransitionAddFrames = addFrames;
 			}
 		}
@@ -813,7 +827,8 @@ namespace iviewer
 					var clipControl = flowPanel.Controls.OfType<ClipControl>().FirstOrDefault(c => (int)c.Tag == i);
 					if (clipControl.txtAddFrames.Text != rowClip.TransitionAddFrames.ToString()
 						|| clipControl.cboEffect.Text != rowClip.TransitionType.ToString()
-						|| clipControl.txtDropFrames.Text != rowClip.TransitionDropFrames.ToString()
+						|| clipControl.txtDropFirstFrames.Text != rowClip.TransitionDropFirstFrames.ToString()
+						|| clipControl.txtDropLastFrames.Text != rowClip.TransitionDropLastFrames.ToString()
 						|| clipControl.txtLength.Text != rowClip.TransitionDuration.ToString()
 						|| clipControl.txtSpeed.Text != rowClip.ClipSpeed.ToString())
 					{
@@ -1449,17 +1464,27 @@ namespace iviewer
 			btnPlayAll.Text = "Stop All";
 			btnPlayAll.BackColor = Color.LightCoral;
 
-			// Build playlist from your clip states
-			var playlist = _playAllVideos.Select(clipState => new PlaylistItem
+			// Build playlist with row index tracking
+			var playlist = new List<(PlaylistItem item, int rowIndex)>();
+			for (int i = 0; i < _playAllVideos.Count; i++)
 			{
-				FilePath = clipState.VideoPath,
-				Speed = (float)(clipState.ClipSpeed * speedFactor)
-			}).ToList();
+				var clipState = _playAllVideos[i];
+				if (File.Exists(clipState.VideoPath))
+				{
+					playlist.Add((new PlaylistItem
+					{
+						FilePath = clipState.VideoPath,
+						Speed = (float)(clipState.ClipSpeed * speedFactor)
+					}, i));
+				}
+			}
 
 			// Create event handlers
-			playlistHandler = (s, index) => {
-				btnPlayAll.Text = $"Playing {index + 1}/{videoPlayerPerPrompt.PlaylistCount}";
-				HighlightCurrentVideoButton(index);
+			playlistHandler = (s, playlistIndex) => {
+				var (item, rowIndex) = playlist[playlistIndex];
+				btnPlayAll.Text = $"Playing: {rowIndex + 1}";
+				this.Text = $"Playing: {rowIndex + 1}/{_playAllVideos.Count} ({playlistIndex + 1}/{playlist.Count} videos)";
+				HighlightCurrentVideoButton(rowIndex);
 			};
 
 			finishedHandler = (s, e) => {
@@ -1473,38 +1498,11 @@ namespace iviewer
 			videoPlayerPerPrompt.VideoFinished += finishedHandler;
 
 			// Start playing the playlist
-			await videoPlayerPerPrompt.PlayPlaylistAsync(playlist);
+			await videoPlayerPerPrompt.PlayPlaylistAsync(playlist.Select(p => p.item).ToList());
 		}
 
 		EventHandler finishedHandler;
 		EventHandler<int> playlistHandler;
-
-		private void StartPlayAllSequence_oldWay(double speedFactor = 1.0)
-		{ 
-			if (_isPlayingAll)
-			{
-				StopPlayAllSequence();
-				//return;
-			}
-
-			if (!GeneratedRows.Any())
-			{
-				return;
-			}
-
-			_playAllVideos.Clear();
-			foreach (DataGridViewRow row in dgvPrompts.Rows)
-			{
-				_playAllVideos.Add(RowClipState(row));
-			}
-
-			_isPlayingAll = true;
-			_currentPlayAllIndex = 0;
-			btnPlayAll.Text = "Stop All";
-			btnPlayAll.BackColor = Color.LightCoral;
-
-			PlayNextVideoInSequence(speedFactor, null);
-		}
 
 		private void StopPlayAllSequence()
 		{
@@ -1512,6 +1510,8 @@ namespace iviewer
 
 			btnPlayAll.Text = "Play All";
 			btnPlayAll.BackColor = SystemColors.Control;
+
+			this.Text = "Video Generator";
 
 			// Reset all button highlights
 			ResetAllVideoButtonHighlights();
@@ -1560,7 +1560,7 @@ namespace iviewer
 					}
 
 					var frameTime = 1.0 / info.PrimaryVideoStream.FrameRate;
-					var frameAdjustment = Math.Max(0, (frameTime * clipState.TransitionDropFrames) + (frameTime * clipState.TransitionAddFrames));
+					var frameAdjustment = Math.Max(0, (frameTime * clipState.TransitionDropLastFrames) + (frameTime * clipState.TransitionAddFrames));
 					double videoDuration = (info.Duration.TotalSeconds - frameAdjustment) / (clipState.ClipSpeed * speedFactor);
 
 					// Create task to get info for next video
@@ -1650,6 +1650,15 @@ namespace iviewer
 		{
 			public Color BackColor { get; set; }
 			public Color ForeColor { get; set; }
+		}
+
+		#endregion
+
+		#region Extract frame
+
+		private async void btnExtractFrame_Click(object sender, EventArgs e)
+		{
+			await videoPlayerPerPrompt.ExtractCurrentFrameAsync(Path.Combine(_videoGenerationState.TempDir, $"frame_{Guid.NewGuid().ToString()}.png"));
 		}
 
 		#endregion

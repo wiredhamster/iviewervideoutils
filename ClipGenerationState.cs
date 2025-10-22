@@ -186,19 +186,19 @@ namespace iviewer
         }
         double transitionDuration;
 
-        public int TransitionDropFrames 
+        public int TransitionDropLastFrames 
         {
-            get => transitionDropFrames;
+            get => transitionDropLastFrames;
             set
             {
-                if (transitionDropFrames != value)
+                if (transitionDropLastFrames != value)
                 {
-                    transitionDropFrames = value;
+                    transitionDropLastFrames = value;
                     SetHasChanges();
                 }
             }
         }
-        int transitionDropFrames;
+        int transitionDropLastFrames;
 
         public int TransitionAddFrames 
         {
@@ -214,7 +214,21 @@ namespace iviewer
         }
         public int transitionAddFrames;
 
-        public double ClipSpeed 
+		public int TransitionDropFirstFrames
+		{
+			get => transitionDropFirstFrames;
+			set
+			{
+				if (transitionDropFirstFrames != value)
+				{
+					transitionDropFirstFrames = value;
+					SetHasChanges();
+				}
+			}
+		}
+		int transitionDropFirstFrames;
+
+		public double ClipSpeed 
         {
             get => clipSpeed;
             set
@@ -262,11 +276,11 @@ namespace iviewer
         }
         string workingDir;
 
-        #endregion
-        
-        #region Loading / Saving
+		#endregion
 
-        protected override void FillFromDictionary(Dictionary<string, object> dic)
+		#region Loading / Saving
+
+		protected override void FillFromDictionary(Dictionary<string, object> dic)
         {
             base.FillFromDictionary(dic);
             ImagePath = dic["ImagePath"].ToString();
@@ -279,8 +293,9 @@ namespace iviewer
             VideoGenerationStatePK = Guid.Parse(dic["VideoGenerationStatePK"].ToString());
             TransitionType = dic["TransitionType"].ToString();
             TransitionDuration = double.Parse(dic["TransitionDuration"].ToString());
-            TransitionDropFrames = int.Parse(dic["TransitionDropFrames"].ToString());
-            TransitionAddFrames = int.Parse(dic["TransitionAddFrames"].ToString());
+            TransitionDropLastFrames = int.Parse(dic["TransitionDropLastFrames"].ToString());
+			TransitionDropFirstFrames = int.Parse(dic["TransitionDropFirstFrames"].ToString());
+			TransitionAddFrames = int.Parse(dic["TransitionAddFrames"].ToString());
             ClipSpeed = double.Parse(dic["ClipSpeed"].ToString());
         }
 
@@ -297,8 +312,9 @@ namespace iviewer
             dic["VideoGenerationStatePK"] = VideoGenerationStatePK;
             dic["TransitionType"] = TransitionType;
             dic["TransitionDuration"] = TransitionDuration;
-            dic["TransitionDropFrames"] = TransitionDropFrames;
-            dic["TransitionAddFrames"] = TransitionAddFrames;
+            dic["TransitionDropLastFrames"] = TransitionDropLastFrames;
+			dic["TransitionDropFirstFrames"] = TransitionDropFirstFrames;
+			dic["TransitionAddFrames"] = TransitionAddFrames;
             dic["ClipSpeed"] = ClipSpeed;
 
             return dic;
@@ -315,7 +331,7 @@ namespace iviewer
             WorkflowJson = string.Empty;
             TransitionType = "Interpolate";
             TransitionDuration = 0.15;
-            TransitionDropFrames = 2;
+            TransitionDropLastFrames = 2;
             TransitionAddFrames = 2;
             ClipSpeed = 1;
         }

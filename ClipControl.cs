@@ -45,76 +45,76 @@ namespace iviewer.Video
 
         public void EnableTransitionControls()
         {
-           if (Enabled && !LastClip && cboEffect.Text == "Fade")
-           {
-                btnClip.Enabled = true;
-                txtSpeed.Visible = true;
-                lblSpeed.Visible = true;
-                cboEffect.Visible = true;
-                lblEffect.Visible = true;
-                lblAdd.Visible = false;
-                txtAddFrames.Visible = false;
-                lblDrop.Visible = false;
-                txtDropFrames.Visible = false;
-                lblLength.Visible = true;
-                txtLength.Visible = true;
-            }
-            else if (Enabled && !LastClip && cboEffect.Text == "Interpolate")
-            {
-                btnClip.Enabled = true;
-                txtSpeed.Visible = true;
-                lblSpeed.Visible = true;
-                cboEffect.Visible = true;
-                lblEffect.Visible = true;
-                txtAddFrames.Visible = true;
-                lblAdd.Visible = true;
-                txtDropFrames.Visible = true;
-                lblDrop.Visible = true;
-                txtLength.Visible = false;
-                lblLength.Visible = false;
-            }
-            else if (Enabled && LastClip)
-            {
-                btnClip.Enabled = true;
-                txtSpeed.Visible = true;
-                lblSpeed.Visible = true;
-                cboEffect.Visible = false;
-                lblEffect.Visible = false;
-                txtAddFrames.Visible = false;
-                lblAdd.Visible = false;
-                txtDropFrames.Visible = true;
-                lblDrop.Visible = true;
-                txtLength.Visible = false;
-                lblLength.Visible = false;
-            }
-           else if (Enabled)
-            {
-                btnClip.Enabled = true;
-                txtSpeed.Visible = true;
-                lblSpeed.Visible = true;
-                cboEffect.Visible = true;
-                lblEffect.Visible = true;
-                txtAddFrames.Visible = false;
-                lblAdd.Visible = false;
-                txtDropFrames.Visible = true;
-                lblDrop.Visible = true;
-                txtLength.Visible = false;
-                lblLength.Visible = false;
-            }
-            else
-            {
-                btnClip.Enabled = false;
-                txtSpeed.Visible = false;
-                lblSpeed.Visible = false;
-                cboEffect.Visible = false;
-                lblEffect.Visible = false;
-                txtAddFrames.Visible = false;
-                lblAdd.Visible = false;
-                txtDropFrames.Visible = false;
-                lblDrop.Visible = false;
-                txtLength.Visible = false;
-                lblLength.Visible = false;
-            }
+           //if (Enabled && !LastClip && cboEffect.Text == "Fade")
+           //{
+           //     btnClip.Enabled = true;
+           //     txtSpeed.Visible = true;
+           //     lblSpeed.Visible = true;
+           //     cboEffect.Visible = true;
+           //     lblEffect.Visible = true;
+           //     lblAdd.Visible = false;
+           //     txtAddFrames.Visible = false;
+           //     lblDrop.Visible = false;
+           //     txtDropFrames.Visible = false;
+           //     lblLength.Visible = true;
+           //     txtLength.Visible = true;
+           // }
+           // else if (Enabled && !LastClip && cboEffect.Text == "Interpolate")
+           // {
+           //     btnClip.Enabled = true;
+           //     txtSpeed.Visible = true;
+           //     lblSpeed.Visible = true;
+           //     cboEffect.Visible = true;
+           //     lblEffect.Visible = true;
+           //     txtAddFrames.Visible = true;
+           //     lblAdd.Visible = true;
+           //     txtDropFrames.Visible = true;
+           //     lblDrop.Visible = true;
+           //     txtLength.Visible = false;
+           //     lblLength.Visible = false;
+           // }
+           // else if (Enabled && LastClip)
+           // {
+           //     btnClip.Enabled = true;
+           //     txtSpeed.Visible = true;
+           //     lblSpeed.Visible = true;
+           //     cboEffect.Visible = false;
+           //     lblEffect.Visible = false;
+           //     txtAddFrames.Visible = false;
+           //     lblAdd.Visible = false;
+           //     txtDropFrames.Visible = true;
+           //     lblDrop.Visible = true;
+           //     txtLength.Visible = false;
+           //     lblLength.Visible = false;
+           // }
+           //else if (Enabled)
+           // {
+           //     btnClip.Enabled = true;
+           //     txtSpeed.Visible = true;
+           //     lblSpeed.Visible = true;
+           //     cboEffect.Visible = true;
+           //     lblEffect.Visible = true;
+           //     txtAddFrames.Visible = false;
+           //     lblAdd.Visible = false;
+           //     txtDropFrames.Visible = true;
+           //     lblDrop.Visible = true;
+           //     txtLength.Visible = false;
+           //     lblLength.Visible = false;
+           // }
+           // else
+           // {
+           //     btnClip.Enabled = false;
+           //     txtSpeed.Visible = false;
+           //     lblSpeed.Visible = false;
+           //     cboEffect.Visible = false;
+           //     lblEffect.Visible = false;
+           //     txtAddFrames.Visible = false;
+           //     lblAdd.Visible = false;
+           //     txtDropFrames.Visible = false;
+           //     lblDrop.Visible = false;
+           //     txtLength.Visible = false;
+           //     lblLength.Visible = false;
+           // }
         }
     }
 }
