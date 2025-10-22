@@ -479,12 +479,12 @@ namespace iviewer
             tabPagePerPrompt.Controls.Add(videoPlayerPerPrompt);
         }
 
-        private void btnPlayAll_Click(object sender, EventArgs e)
+        private async void btnPlayAll_Click(object sender, EventArgs e)
         {
             StartPlayAllSequence();
         }
 
-        private void btnPlay2x_Click(object sender, EventArgs e)
+        private async void btnPlay2x_Click(object sender, EventArgs e)
         {
             StartPlayAllSequence(2);
         }

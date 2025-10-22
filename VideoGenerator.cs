@@ -3,6 +3,7 @@ using iviewer.Helpers;
 using iviewer.Services;
 using iviewer.Video;
 using System.Data;
+using static System.Windows.Forms.VisualStyles.VisualStyleElement.StartPanel;
 
 namespace iviewer
 {
@@ -1424,12 +1425,66 @@ namespace iviewer
 
 		#region Play All Feature
 
-		private void StartPlayAllSequence(double speedFactor = 1.0)
+		private async void StartPlayAllSequence(double speedFactor = 1.0)
 		{
 			if (_isPlayingAll)
 			{
 				StopPlayAllSequence();
+				//return;
+			}
+
+			if (!GeneratedRows.Any())
+			{
 				return;
+			}
+
+			_playAllVideos.Clear();
+			foreach (DataGridViewRow row in dgvPrompts.Rows)
+			{
+				_playAllVideos.Add(RowClipState(row));
+			}
+
+			_isPlayingAll = true;
+			_currentPlayAllIndex = 0;
+			btnPlayAll.Text = "Stop All";
+			btnPlayAll.BackColor = Color.LightCoral;
+
+			// Build playlist from your clip states
+			var playlist = _playAllVideos.Select(clipState => new PlaylistItem
+			{
+				FilePath = clipState.VideoPath,
+				Speed = (float)(clipState.ClipSpeed * speedFactor)
+			}).ToList();
+
+			// Create event handlers
+			playlistHandler = (s, index) => {
+				btnPlayAll.Text = $"Playing {index + 1}/{videoPlayerPerPrompt.PlaylistCount}";
+				HighlightCurrentVideoButton(index);
+			};
+
+			finishedHandler = (s, e) => {
+				if (!videoPlayerPerPrompt.IsPlayingPlaylist)
+				{
+					StopPlayAllSequence();
+				}
+			};
+
+			videoPlayerPerPrompt.PlaylistItemChanged += playlistHandler;
+			videoPlayerPerPrompt.VideoFinished += finishedHandler;
+
+			// Start playing the playlist
+			await videoPlayerPerPrompt.PlayPlaylistAsync(playlist);
+		}
+
+		EventHandler finishedHandler;
+		EventHandler<int> playlistHandler;
+
+		private void StartPlayAllSequence_oldWay(double speedFactor = 1.0)
+		{ 
+			if (_isPlayingAll)
+			{
+				StopPlayAllSequence();
+				//return;
 			}
 
 			if (!GeneratedRows.Any())
@@ -1463,6 +1518,10 @@ namespace iviewer
 
 			// Stop current video
 			//videoPlayerPerPrompt?.StopAndHide();
+			videoPlayerPerPrompt.StopPlaylist();
+
+			videoPlayerPerPrompt.PlaylistItemChanged -= playlistHandler;
+			videoPlayerPerPrompt.VideoFinished -= finishedHandler;
 		}
 
 		private async void PlayNextVideoInSequence(double speedFactor, Task<IMediaAnalysis> infoTask)
