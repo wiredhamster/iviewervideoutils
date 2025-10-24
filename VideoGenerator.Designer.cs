@@ -494,14 +494,7 @@ namespace iviewer
 
         private async void btnPlayAll_Click(object sender, EventArgs e)
         {
-			if (_isPlayingAll)
-			{
-				videoPlayerPerPrompt.TogglePlayPause();
-			}
-			else
-			{
-				StartPlayAllSequence();
-			}
+			StartPlayAllSequence();
 		}
 
         private async void btnPlay2x_Click(object sender, EventArgs e)

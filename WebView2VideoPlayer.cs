@@ -270,6 +270,77 @@ namespace iviewer
             log('Video paused');
             window.chrome.webview.postMessage(JSON.stringify({ type: 'paused' }));
         });
+        
+        // Toggle play/pause on click
+        video.addEventListener('click', () => {
+            if (video.paused) {
+                video.play().catch(err => {
+                    log('Play failed: ' + err.message);
+                });
+            } else {
+                video.pause();
+            }
+        });
+        
+        // Frame-by-frame navigation with arrow keys and mouse wheel
+        let currentFps = 30; // Will be updated when video plays
+        
+        // Update FPS estimate when video metadata loads
+        video.addEventListener('loadedmetadata', () => {
+            // Estimate FPS from video (rough approximation)
+            if (video.duration > 0) {
+                currentFps = 30; // Default, will be overridden by playbackRate context
+            }
+        });
+        
+        // Arrow key navigation
+        document.addEventListener('keydown', (e) => {
+            if (e.key === 'd' || e.key === 'D') {
+                debugVisible = !debugVisible;
+                debug.style.display = debugVisible ? 'block' : 'none';
+                return;
+            }
+            
+            if (e.key === 'ArrowLeft') {
+                e.preventDefault();
+                // Go back one frame
+                const frameTime = 1 / currentFps;
+                video.currentTime = Math.max(0, video.currentTime - frameTime);
+                log('Frame back: ' + video.currentTime.toFixed(3) + 's');
+            } else if (e.key === 'ArrowRight') {
+                e.preventDefault();
+                // Go forward one frame
+                const frameTime = 1 / currentFps;
+                video.currentTime = Math.min(video.duration, video.currentTime + frameTime);
+                log('Frame forward: ' + video.currentTime.toFixed(3) + 's');
+            } else if (e.key === ' ' || e.key === 'Spacebar') {
+                e.preventDefault();
+                // Toggle play/pause with spacebar
+                if (video.paused) {
+                    video.play().catch(err => {
+                        log('Play failed: ' + err.message);
+                    });
+                } else {
+                    video.pause();
+                }
+            }
+        });
+        
+        // Mouse wheel navigation
+        video.addEventListener('wheel', (e) => {
+            e.preventDefault();
+            const frameTime = 1 / currentFps;
+            
+            if (e.deltaY < 0) {
+                // Scroll up = forward one frame
+                video.currentTime = Math.min(video.duration, video.currentTime + frameTime);
+                log('Frame forward: ' + video.currentTime.toFixed(3) + 's');
+            } else if (e.deltaY > 0) {
+                // Scroll down = back one frame
+                video.currentTime = Math.max(0, video.currentTime - frameTime);
+                log('Frame back: ' + video.currentTime.toFixed(3) + 's');
+            }
+        });
 
         window.playVideo = function(path, speed, loop) {
             log('Play command received: ' + path);
@@ -288,6 +359,8 @@ namespace iviewer
             video.play().then(() => {
                 // Set speed AFTER play starts for better reliability
                 video.playbackRate = speed || 1.0;
+                // Update FPS estimate based on playback rate
+                currentFps = 30 / video.playbackRate;
                 log('Play successful, playbackRate set to: ' + video.playbackRate);
             }).catch(err => {
                 log('Play failed: ' + err.message);
@@ -636,14 +709,109 @@ namespace iviewer
 
 		public async Task<bool> ExtractCurrentFrameAsync(string outputPath)
 		{
+			return await ExtractCurrentFrameAsync(outputPath, 0, 0);
+		}
+
+		public async Task<bool> ExtractCurrentFrameAsync(string outputPath, int targetWidth, int targetHeight)
+		{
 			try
 			{
 				if (!_isInitialized) return false;
 
-				var bmp = new System.Drawing.Bitmap(_webView.Width, _webView.Height);
-				_webView.DrawToBitmap(bmp, new System.Drawing.Rectangle(0, 0, _webView.Width, _webView.Height));
-				bmp.Save(outputPath);
-				bmp.Dispose();
+				// Capture the full WebView2 content
+				using (var stream = new System.IO.MemoryStream())
+				{
+					await _webView.CoreWebView2.CapturePreviewAsync(
+						CoreWebView2CapturePreviewImageFormat.Png,
+						stream);
+
+					stream.Position = 0;
+
+					if (targetWidth > 0 && targetHeight > 0)
+					{
+						// Get video's native dimensions to calculate scale factor
+						string script = @"
+                            (function() {
+                                const video = document.getElementById('videoPlayer');
+                                return JSON.stringify({
+                                    videoWidth: video.videoWidth,
+                                    videoHeight: video.videoHeight
+                                });
+                            })();
+                        ";
+
+						string result = await _webView.CoreWebView2.ExecuteScriptAsync(script);
+						result = result.Trim('"').Replace("\\\"", "\"");
+
+						var dimensions = JsonSerializer.Deserialize<Dictionary<string, int>>(result);
+						int videoWidth = dimensions["videoWidth"];
+						int videoHeight = dimensions["videoHeight"];
+
+						// Crop and scale to specified dimensions
+						using (var fullImage = System.Drawing.Image.FromStream(stream))
+						{
+							Debug.WriteLine($"Screenshot: {fullImage.Width}x{fullImage.Height}, Video native: {videoWidth}x{videoHeight}, Target: {targetWidth}x{targetHeight}");
+
+							// Calculate how the video fits in the screenshot (object-fit: contain)
+							float videoAspect = (float)videoWidth / videoHeight;
+							float screenshotAspect = (float)fullImage.Width / fullImage.Height;
+
+							int videoDisplayWidth, videoDisplayHeight;
+							int cropX, cropY;
+
+							if (videoAspect > screenshotAspect)
+							{
+								// Video is wider - black bars on top/bottom in screenshot
+								videoDisplayWidth = fullImage.Width;
+								videoDisplayHeight = (int)(fullImage.Width / videoAspect);
+								cropX = 0;
+								cropY = (fullImage.Height - videoDisplayHeight) / 2;
+							}
+							else
+							{
+								// Video is taller - black bars on left/right in screenshot
+								videoDisplayHeight = fullImage.Height;
+								videoDisplayWidth = (int)(fullImage.Height * videoAspect);
+								cropX = (fullImage.Width - videoDisplayWidth) / 2;
+								cropY = 0;
+							}
+
+							Debug.WriteLine($"Video display in screenshot: {videoDisplayWidth}x{videoDisplayHeight} at ({cropX},{cropY})");
+
+							// Crop to video area (removing black bars)
+							using (var videoOnlyImage = new System.Drawing.Bitmap(videoDisplayWidth, videoDisplayHeight))
+							{
+								using (var g = System.Drawing.Graphics.FromImage(videoOnlyImage))
+								{
+									g.DrawImage(fullImage,
+										new System.Drawing.Rectangle(0, 0, videoDisplayWidth, videoDisplayHeight),
+										new System.Drawing.Rectangle(cropX, cropY, videoDisplayWidth, videoDisplayHeight),
+										System.Drawing.GraphicsUnit.Pixel);
+								}
+
+								// Now scale to target dimensions
+								using (var scaledImage = new System.Drawing.Bitmap(targetWidth, targetHeight))
+								{
+									using (var g = System.Drawing.Graphics.FromImage(scaledImage))
+									{
+										g.InterpolationMode = System.Drawing.Drawing2D.InterpolationMode.HighQualityBicubic;
+										g.DrawImage(videoOnlyImage, 0, 0, targetWidth, targetHeight);
+									}
+
+									SaveImage(scaledImage, outputPath);
+								}
+							}
+						}
+					}
+					else
+					{
+						// Save full screenshot without cropping
+						using (var image = System.Drawing.Image.FromStream(stream))
+						{
+							SaveImage(image, outputPath);
+						}
+					}
+				}
 
 				Debug.WriteLine($"Frame saved to: {outputPath}");
 				return true;
@@ -653,6 +821,23 @@ namespace iviewer
 				Debug.WriteLine($"Error extracting frame: {ex.Message}");
 				ErrorOccurred?.Invoke(this, $"Frame extraction failed: {ex.Message}");
 				return false;
+			}
+		}
+
+		private void SaveImage(System.Drawing.Image image, string outputPath)
+		{
+			string ext = Path.GetExtension(outputPath).ToLower();
+			if (ext == ".jpg" || ext == ".jpeg")
+			{
+				image.Save(outputPath, System.Drawing.Imaging.ImageFormat.Jpeg);
+			}
+			else if (ext == ".bmp")
+			{
+				image.Save(outputPath, System.Drawing.Imaging.ImageFormat.Bmp);
+			}
+			else
+			{
+				image.Save(outputPath, System.Drawing.Imaging.ImageFormat.Png);
 			}
 		}
 

@@ -83,6 +83,8 @@ namespace iviewer
                 int width = firstInfo.PrimaryVideoStream.Width;
                 int height = firstInfo.PrimaryVideoStream.Height;
 
+                var secondInfo = await FFProbe.AnalyseAsync(paths[1]);
+
                 // Normalize each video (reset PTS, ensure consistent encoding)
                 for (int i = 0; i < paths.Count; i++)
                 {
@@ -103,8 +105,8 @@ namespace iviewer
                     normalizedPaths.Add(normalizedPath);
                 }
 
-                var highQuality = true;
-                if (highQuality)
+                var useKeyFrames = paths.Count > 2 || secondInfo.PrimaryVideoStream.Duration.TotalSeconds > 1;
+                if (useKeyFrames)
                 {
                     // Calculate keyframe positions (duration of each clip)
                     var durations = new List<double>();
@@ -443,7 +445,7 @@ namespace iviewer
                     .ProcessAsynchronously();
             }
 
-            //mediaInfo = FFProbe.Analyse(tempOutput);
+            //var info = FFProbe.Analyse(tempOutput);
             //Debug.WriteLine($"Speed changed by {speed}. Fps from {originalFps} to {info.PrimaryVideoStream.FrameRate}. Duration from {originalDuration} to {info.PrimaryVideoStream.Duration.TotalSeconds}");
 
             return tempOutput;
@@ -558,7 +560,7 @@ namespace iviewer
         }
 
 
-        static string UpscaleImage(string input, string outputPath, bool deleteInput = true)
+        public static string UpscaleImage(string input, string outputPath, bool deleteInput = true)
         {
             string upscaledPath = Path.Combine(outputPath, $"{Path.GetFileNameWithoutExtension(input)}_upscaled.png");
 

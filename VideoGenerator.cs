@@ -1658,7 +1658,11 @@ namespace iviewer
 
 		private async void btnExtractFrame_Click(object sender, EventArgs e)
 		{
-			await videoPlayerPerPrompt.ExtractCurrentFrameAsync(Path.Combine(_videoGenerationState.TempDir, $"frame_{Guid.NewGuid().ToString()}.png"));
+			var temp = Path.Combine(_videoGenerationState.WorkingDir, $"frame_{Guid.NewGuid().ToString()}.png");
+
+			await videoPlayerPerPrompt.ExtractCurrentFrameAsync(temp, _videoGenerationState.Width, _videoGenerationState.Height);
+			
+			VideoUtils.UpscaleImage(temp, _videoGenerationState.TempDir, true);
 		}
 
 		#endregion
@@ -1869,7 +1873,7 @@ namespace iviewer
 		public static string ComfyOutputDir => @"C:\Users\sysadmin\Documents\ComfyUI\output\iviewer\temp_output";
 		public static string TempFileDir => @"C:\Users\sysadmin\Documents\ComfyUI\output\iviewer\temp_files";
 		public static string WorkingDir => @"C:\Users\sysadmin\Documents\ComfyUI\output\iviewer";
-		public static string I2vWorkflowPath => @"C:\Users\sysadmin\Documents\ComfyUI\user\default\workflows\iviewer\Wan22 i2v - API.json";
+		public static string I2vWorkflowPath => @"C:\Users\sysadmin\Documents\ComfyUI\user\default\workflows\iviewer\Wan22 i2v - API - lora.json";
 		public static string I2vWorkflowFileStem => "comfyui_video";
 		public static string FlfWorkflowPath => @"C:\Users\sysadmin\Documents\ComfyUI\user\default\workflows\iviewer\Wan22 flf - API.json";
 		public static string FlfWorkflowFileStem => "comfyui_video";
