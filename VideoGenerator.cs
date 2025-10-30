@@ -3,6 +3,7 @@ using iviewer.Helpers;
 using iviewer.Services;
 using iviewer.Video;
 using System.Data;
+using System.Diagnostics;
 using static System.Windows.Forms.VisualStyles.VisualStyleElement.StartPanel;
 
 namespace iviewer
@@ -519,7 +520,7 @@ namespace iviewer
 
 			// Clear existing dynamic controls but keep the buttons and video player
 			var controlsToRemove = tabPagePerPrompt.Controls.OfType<Control>()
-				.Where(c => c != videoPlayerPerPrompt && c != btnPreview && c != btnImport && c != btnPlayAll && c != btnPlay2x && c != btnExtractFrame)
+				.Where(c => c != videoPlayerPerPrompt && c != btnPreview && c != btnImport && c != btnPlayAll && c != btnPlay2x && c != btnExtractFrame && c != btnFiles)
 				.ToList();
 
 			foreach (var control in controlsToRemove)
@@ -538,6 +539,7 @@ namespace iviewer
 			btnPlayAll.BringToFront();
 			btnPlay2x.BringToFront();
 			btnExtractFrame.BringToFront();
+			btnFiles.BringToFront();
 
 			// Adjust video player size to accommodate flow panel
 			videoPlayerPerPrompt.Size = new Size(btnPreview.Left - 10, tabPagePerPrompt.Height - 400);
@@ -1128,6 +1130,20 @@ namespace iviewer
 			{
 				LoadPreviewTabs();
 			}
+			else if (tabControl.SelectedIndex == 3)
+			{
+				if (lorasControl == null)
+				{
+					lorasControl = new Loras();
+					tabControl.TabPages[tabControl.SelectedIndex].Controls.Add(lorasControl);
+					lorasControl.Width = this.Width - lorasControl.Left * 2;
+					lorasControl.Height = this.Height - lorasControl.Height * 2;
+					lorasControl.Dock = DockStyle.Fill;
+					lorasControl.LoadData();
+
+					lorasControl.LoraCopied += LorasControl_LoraCopied; ;
+				}
+			}
 		}
 
 		private void OnGridCellClick(object sender, DataGridViewCellEventArgs e)
@@ -1271,6 +1287,11 @@ namespace iviewer
 				tb.AcceptsReturn = true;
 				tb.WordWrap = true;
 			}
+		}
+
+		private void LorasControl_LoraCopied(object? sender, EventArgs e)
+		{
+			tabControl.SelectedIndex = 0;
 		}
 
 		#endregion
@@ -1480,14 +1501,16 @@ namespace iviewer
 			}
 
 			// Create event handlers
-			playlistHandler = (s, playlistIndex) => {
+			playlistHandler = (s, playlistIndex) =>
+			{
 				var (item, rowIndex) = playlist[playlistIndex];
 				btnPlayAll.Text = $"Playing: {rowIndex + 1}";
 				this.Text = $"Playing: {rowIndex + 1}/{_playAllVideos.Count} ({playlistIndex + 1}/{playlist.Count} videos)";
 				HighlightCurrentVideoButton(rowIndex);
 			};
 
-			finishedHandler = (s, e) => {
+			finishedHandler = (s, e) =>
+			{
 				if (!videoPlayerPerPrompt.IsPlayingPlaylist)
 				{
 					StopPlayAllSequence();
@@ -1522,74 +1545,6 @@ namespace iviewer
 
 			videoPlayerPerPrompt.PlaylistItemChanged -= playlistHandler;
 			videoPlayerPerPrompt.VideoFinished -= finishedHandler;
-		}
-
-		private async void PlayNextVideoInSequence(double speedFactor, Task<IMediaAnalysis> infoTask)
-		{
-			if (!_isPlayingAll || _currentPlayAllIndex >= _playAllVideos.Count)
-			{
-				// Sequence complete
-				StopPlayAllSequence();
-				return;
-			}
-
-			var clipState = _playAllVideos[_currentPlayAllIndex];
-
-			try
-			{
-				if (File.Exists(clipState.VideoPath))
-				{
-					// Update button to show current progress
-					btnPlayAll.Text = $"Playing {_currentPlayAllIndex + 1}/{_playAllVideos.Count}";
-
-					// Highlight the current video button
-					HighlightCurrentVideoButton(_currentPlayAllIndex);
-
-					// Load and play the video
-					LoadVideoInPlayer(videoPlayerPerPrompt, clipState.VideoPath, ref _perPromptStream, clipState.ClipSpeed * speedFactor);
-
-					// Get video duration and wait for it to complete
-					var info = (IMediaAnalysis)null;
-					if (infoTask != null)
-					{
-						info = await infoTask;
-					}
-					else
-					{
-						info = FFProbe.Analyse(clipState.VideoPath);
-					}
-
-					var frameTime = 1.0 / info.PrimaryVideoStream.FrameRate;
-					var frameAdjustment = Math.Max(0, (frameTime * clipState.TransitionDropLastFrames) + (frameTime * clipState.TransitionAddFrames));
-					double videoDuration = (info.Duration.TotalSeconds - frameAdjustment) / (clipState.ClipSpeed * speedFactor);
-
-					// Create task to get info for next video
-					var nextClipState = _playAllVideos.Count > _currentPlayAllIndex + 1 ? _playAllVideos[_currentPlayAllIndex + 1] : null;
-					if (nextClipState != null && File.Exists(nextClipState.VideoPath))
-					{
-						infoTask = FFProbe.AnalyseAsync(nextClipState.VideoPath);
-					}
-
-					await Task.Delay(TimeSpan.FromSeconds(videoDuration));
-				}
-
-				// Move to next video if still playing all
-				if (_isPlayingAll)
-				{
-					_currentPlayAllIndex++;
-					PlayNextVideoInSequence(speedFactor, infoTask);
-				}
-			}
-			catch (Exception ex)
-			{
-				MessageBox.Show($"Error playing video {Path.GetFileName(clipState.VideoPath)}: {ex.Message}");
-				// Skip to next video
-				if (_isPlayingAll)
-				{
-					_currentPlayAllIndex++;
-					PlayNextVideoInSequence(speedFactor, null);
-				}
-			}
 		}
 
 		private void HighlightCurrentVideoButton(int videoIndex)
@@ -1661,8 +1616,17 @@ namespace iviewer
 			var temp = Path.Combine(_videoGenerationState.WorkingDir, $"frame_{Guid.NewGuid().ToString()}.png");
 
 			await videoPlayerPerPrompt.ExtractCurrentFrameAsync(temp, _videoGenerationState.Width, _videoGenerationState.Height);
-			
+
 			VideoUtils.UpscaleImage(temp, _videoGenerationState.TempDir, true);
+		}
+
+		#endregion
+
+		#region View Files
+
+		private void btnFiles_Click(object sender, EventArgs e)
+		{
+			Process.Start("explorer.exe", _videoGenerationState.TempDir);
 		}
 
 		#endregion
@@ -1793,9 +1757,6 @@ namespace iviewer
 			_fullStream?.Dispose();
 			_perPromptStream?.Dispose();
 
-			EventBus.ClipStatusChanged -= OnClipStatusChanged;
-			EventBus.VideoStatusChanged -= OnVideoStatusChanged;
-
 			if (btnExport.Text == "Exporting...")
 			{
 				e.Cancel = true;
@@ -1818,7 +1779,10 @@ namespace iviewer
 				var action = MessageBox.Show("Discard?", "Video Generator", MessageBoxButtons.YesNoCancel);
 				if (action == DialogResult.Yes)
 				{
-					_generationService.DeleteAndCleanUp(_videoGenerationState);
+					_videoGenerationState.Status = "Delete";
+					_videoGenerationState.Save();
+
+					EventBus.RaiseVideoStatusChanged(_videoGenerationStatePK, "Delete");
 				}
 				else if (action == DialogResult.Cancel)
 				{
@@ -1826,6 +1790,9 @@ namespace iviewer
 					return;
 				}
 			}
+
+			EventBus.ClipStatusChanged -= OnClipStatusChanged;
+			EventBus.VideoStatusChanged -= OnVideoStatusChanged;
 
 			base.OnFormClosing(e);
 		}
@@ -1875,7 +1842,7 @@ namespace iviewer
 		public static string WorkingDir => @"C:\Users\sysadmin\Documents\ComfyUI\output\iviewer";
 		public static string I2vWorkflowPath => @"C:\Users\sysadmin\Documents\ComfyUI\user\default\workflows\iviewer\Wan22 i2v - API - lora.json";
 		public static string I2vWorkflowFileStem => "comfyui_video";
-		public static string FlfWorkflowPath => @"C:\Users\sysadmin\Documents\ComfyUI\user\default\workflows\iviewer\Wan22 flf - API.json";
+		public static string FlfWorkflowPath => @"C:\Users\sysadmin\Documents\ComfyUI\user\default\workflows\iviewer\Wan22 flf - API - lora.json";
 		public static string FlfWorkflowFileStem => "comfyui_video";
 		public static string InterpolateWorkflowPath => @"C:\Users\sysadmin\Documents\ComfyUI\user\default\workflows\iviewer\Interpolate - API.json";
 		public static string InterpolateWorkflowFileStem => "interpolated_";

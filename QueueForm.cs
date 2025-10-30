@@ -185,14 +185,16 @@ ORDER BY v.CreatedDate, c.OrderIndex";
             {
                 while (true)
                 {
+                    var order = chkOrder.Checked ? "DESC" : "ASC";
+
                     // Process queue (e.g., all 'Queued' clips from DB)
                     // Prioritise any clips or videos which are stuck in 'Exporting' or 'Generating' from a previous run.
-                    var sql = @"
+                    var sql = @$"
 SELECT c.PK, c.VideoGenerationStatePK, CASE WHEN c.Status = 'Generating' THEN 0 WHEN v.Status = 'Exporting' THEN 1 WHEN c.Status = 'Queued' THEN 2 WHEN v.Status = 'Export' THEN 4 ELSE 5 END AS Priority
 FROM ClipGenerationStates c
     JOIN VideoGenerationStates v ON c.VideoGenerationStatePK = v.PK
-WHERE c.Status IN ('Queued', 'Generating') OR v.Status IN ('Export', 'Exporting')
-ORDER BY Priority, v.CreatedDate, c.OrderIndex";
+WHERE c.Status IN ('Queued', 'Generating') OR v.Status IN ('Export', 'Exporting', 'Delete', 'Deleting')
+ORDER BY Priority, v.CreatedDate {order}, c.OrderIndex";
                     var dt = DB.SelectSingle(sql);
                     if (!dt.ContainsKey("PK")) break;
 
@@ -211,7 +213,11 @@ ORDER BY Priority, v.CreatedDate, c.OrderIndex";
                     {
                         await GenerateVideo(clipState, video);
                     }
-                    else
+                    else if (video.Status == "Delete" || video.Status == "Deleting")
+                    {
+						_generationService.DeleteAndCleanUp(video);
+					}
+					else
                     {
                         // What???
                         throw new Exception("Why no clip or video?");
@@ -237,7 +243,7 @@ ORDER BY Priority, v.CreatedDate, c.OrderIndex";
             var video = VideoGenerationState.Load(pk);
             if (video != null)
             {
-                if (video.Status == "Export" || video.Status == "Exporting")
+                if (video.Status == "Export" || video.Status == "Exporting" || video.Status == "Delete" || video.Status == "Deleting")
                 {
                     // Do not update video state from Clip states
                 }

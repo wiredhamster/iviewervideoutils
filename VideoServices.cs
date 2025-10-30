@@ -10,6 +10,8 @@ using Newtonsoft.Json.Linq;
 using System.Diagnostics;
 using System.IO;
 using System.Text;
+using System.Text.RegularExpressions;
+using static System.Net.Mime.MediaTypeNames;
 
 namespace iviewer.Services
 {
@@ -268,11 +270,64 @@ namespace iviewer.Services
 				workflowJson = workflowJson.Replace("{END_IMAGE}", endFilename);
 			}
 
+			(workflowJson, prompt) = PrepareWorkflowLoras(workflowJson, prompt);
+
 			// Replace placeholders
 			return workflowJson
 				.Replace("{PROMPT}", prompt)
 				.Replace("{WIDTH}", width.ToString())
 				.Replace("{HEIGHT}", height.ToString());
+		}
+
+		(string workflowJson, string cleanPrompt) PrepareWorkflowLoras(string workflowJson, string prompt)
+		{
+			string pattern = @"<lora:([^:]+):(-?\d+(?:\.\d+)?)(?::(-?\d+(?:\.\d+)?))?>";
+			var index = 1;
+
+			foreach (Match match in Regex.Matches(prompt, pattern))
+			{
+				string key = match.Groups[1].Value;
+				string firstNum = match.Groups[2].Value;
+				string secondNum = match.Groups[3].Value;
+				var lora = Lora.LoadFromKey(key);
+
+				if (lora.HighNoiseLora != "")
+				{
+					workflowJson = workflowJson
+						.Replace($"{{LORA_HIGH{index}_NAME}}", lora.HighNoiseLora)
+						.Replace($"{{LORA_HIGH{index}_STRENGTH}}", lora.HighNoiseStrength.ToString());
+				}
+				if (lora.LowNoiseLora != "")
+				{
+					workflowJson = workflowJson
+						.Replace($"{{LORA_LOW{index}_NAME}}", lora.LowNoiseLora)
+						.Replace($"{{LORA_LOW{index}_STRENGTH}}", lora.LowNoiseStrength.ToString());
+				}
+				index++;
+			}
+
+			// Remove all lora tags from the prompt
+			string cleanPrompt = Regex.Replace(prompt, pattern, "").Trim();
+
+			// Clean up multiple spaces that might be left after removal
+			cleanPrompt = Regex.Replace(cleanPrompt, @"\s+", " ");
+
+			// We need to replace any remaining literals with default values to keep Comfy happy
+			workflowJson = workflowJson
+				.Replace("{LORA_HIGH1_NAME}", "W25_Realistic_I2V_HIGH_v2.safetensors")
+				.Replace("{LORA_HIGH1_STRENGTH}", "1")
+				.Replace("{LORA_HIGH2_NAME}", "")
+				.Replace("{LORA_HIGH2_STRENGTH}", "0")
+				.Replace("{LORA_HIGH3_NAME}", "")
+				.Replace("{LORA_HIGH3_STRENGTH}", "0")
+				.Replace("{LORA_LOW1_NAME}", "W25_Realistic_I2V_LOW_v2.safetensors")
+				.Replace("{LORA_LOW1_STRENGTH}", "1")
+				.Replace("{LORA_LOW2_NAME}", "")
+				.Replace("{LORA_LOW2_STRENGTH}", "0")
+				.Replace("{LORA_LOW3_NAME}", "")
+				.Replace("{LORA_LOW3_STRENGTH}", "0");
+
+			return (workflowJson, cleanPrompt);
 		}
 
 		private async Task<string> UploadImageAsync(string imagePath)

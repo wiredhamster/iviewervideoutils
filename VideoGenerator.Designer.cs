@@ -52,13 +52,15 @@ namespace iviewer
 			btnAddRow = new Button();
 			lblResolution = new Label();
 			tabPagePerPrompt = new TabPage();
+			btnFiles = new Button();
+			btnExtractFrame = new Button();
 			btnPlay2x = new Button();
 			btnPreview = new Button();
 			btnImport = new Button();
 			btnPlayAll = new Button();
 			tabPageFullVideo = new TabPage();
 			btnExport = new Button();
-			btnExtractFrame = new Button();
+			tabPageLoras = new TabPage();
 			tabControl.SuspendLayout();
 			tabPageGeneration.SuspendLayout();
 			((System.ComponentModel.ISupportInitialize)dgvPrompts).BeginInit();
@@ -71,6 +73,7 @@ namespace iviewer
 			tabControl.Controls.Add(tabPageGeneration);
 			tabControl.Controls.Add(tabPagePerPrompt);
 			tabControl.Controls.Add(tabPageFullVideo);
+			tabControl.Controls.Add(tabPageLoras);
 			tabControl.Dock = DockStyle.Fill;
 			tabControl.Location = new Point(0, 0);
 			tabControl.Name = "tabControl";
@@ -259,6 +262,7 @@ namespace iviewer
 			// 
 			// tabPagePerPrompt
 			// 
+			tabPagePerPrompt.Controls.Add(btnFiles);
 			tabPagePerPrompt.Controls.Add(btnExtractFrame);
 			tabPagePerPrompt.Controls.Add(btnPlay2x);
 			tabPagePerPrompt.Controls.Add(btnPreview);
@@ -271,6 +275,28 @@ namespace iviewer
 			tabPagePerPrompt.TabIndex = 1;
 			tabPagePerPrompt.Text = "Per-Prompt Videos";
 			tabPagePerPrompt.UseVisualStyleBackColor = true;
+			// 
+			// btnFiles
+			// 
+			btnFiles.Anchor = AnchorStyles.Top | AnchorStyles.Right;
+			btnFiles.Location = new Point(884, 93);
+			btnFiles.Name = "btnFiles";
+			btnFiles.Size = new Size(100, 23);
+			btnFiles.TabIndex = 11;
+			btnFiles.Text = "Files";
+			btnFiles.UseVisualStyleBackColor = true;
+			btnFiles.Click += btnFiles_Click;
+			// 
+			// btnExtractFrame
+			// 
+			btnExtractFrame.Anchor = AnchorStyles.Top | AnchorStyles.Right;
+			btnExtractFrame.Location = new Point(884, 64);
+			btnExtractFrame.Name = "btnExtractFrame";
+			btnExtractFrame.Size = new Size(100, 23);
+			btnExtractFrame.TabIndex = 10;
+			btnExtractFrame.Text = "Extract Frame";
+			btnExtractFrame.UseVisualStyleBackColor = true;
+			btnExtractFrame.Click += btnExtractFrame_Click;
 			// 
 			// btnPlay2x
 			// 
@@ -286,7 +312,7 @@ namespace iviewer
 			// btnPreview
 			// 
 			btnPreview.Anchor = AnchorStyles.Top | AnchorStyles.Right;
-			btnPreview.Location = new Point(884, 122);
+			btnPreview.Location = new Point(884, 151);
 			btnPreview.Name = "btnPreview";
 			btnPreview.Size = new Size(100, 23);
 			btnPreview.TabIndex = 8;
@@ -297,7 +323,7 @@ namespace iviewer
 			// btnImport
 			// 
 			btnImport.Anchor = AnchorStyles.Top | AnchorStyles.Right;
-			btnImport.Location = new Point(884, 93);
+			btnImport.Location = new Point(884, 122);
 			btnImport.Name = "btnImport";
 			btnImport.Size = new Size(100, 23);
 			btnImport.TabIndex = 7;
@@ -338,16 +364,15 @@ namespace iviewer
 			btnExport.UseVisualStyleBackColor = true;
 			btnExport.Click += btnExport_Click;
 			// 
-			// btnExtractFrame
+			// tabPageLoras
 			// 
-			btnExtractFrame.Anchor = AnchorStyles.Top | AnchorStyles.Right;
-			btnExtractFrame.Location = new Point(884, 64);
-			btnExtractFrame.Name = "btnExtractFrame";
-			btnExtractFrame.Size = new Size(100, 23);
-			btnExtractFrame.TabIndex = 10;
-			btnExtractFrame.Text = "Extract Frame";
-			btnExtractFrame.UseVisualStyleBackColor = true;
-			btnExtractFrame.Click += btnExtractFrame_Click;
+			tabPageLoras.Location = new Point(4, 24);
+			tabPageLoras.Name = "tabPageLoras";
+			tabPageLoras.Padding = new Padding(3);
+			tabPageLoras.Size = new Size(992, 672);
+			tabPageLoras.TabIndex = 3;
+			tabPageLoras.Text = "Loras";
+			tabPageLoras.UseVisualStyleBackColor = true;
 			// 
 			// VideoGenerator
 			// 
@@ -395,6 +420,8 @@ namespace iviewer
         // Video players (created programmatically)
         private VideoPlayerControl videoPlayerFull;
         private VideoPlayerControl videoPlayerPerPrompt;
+
+		private Loras lorasControl;
 
         // Event handler method declarations
         private void btnAddRow_Click(object sender, EventArgs e)
@@ -492,7 +519,7 @@ namespace iviewer
             tabPagePerPrompt.Controls.Add(videoPlayerPerPrompt);
         }
 
-        private async void btnPlayAll_Click(object sender, EventArgs e)
+		private async void btnPlayAll_Click(object sender, EventArgs e)
         {
 			StartPlayAllSequence();
 		}
@@ -515,5 +542,7 @@ namespace iviewer
         private Button btnMoveDown;
         private Button btnMoveUp;
 		private Button btnExtractFrame;
+		private Button btnFiles;
+		private TabPage tabPageLoras;
 	}
 }
