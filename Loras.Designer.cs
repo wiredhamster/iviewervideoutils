@@ -106,6 +106,7 @@
 			linkURL.Name = "linkURL";
 			linkURL.Size = new Size(0, 15);
 			linkURL.TabIndex = 8;
+			linkURL.LinkClicked += LinkURL_LinkClicked;
 			// 
 			// lblCompatibility
 			// 
@@ -176,6 +177,20 @@
 			groupSelector.ResumeLayout(false);
 			ResumeLayout(false);
 			PerformLayout();
+		}
+
+		private void LinkURL_LinkClicked(object sender, LinkLabelLinkClickedEventArgs e)
+		{
+			// Open the URL in the default browser
+			string url = e.Link.LinkData as string;
+			if (!string.IsNullOrEmpty(url))
+			{
+				System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo
+				{
+					FileName = url,
+					UseShellExecute = true
+				});
+			}
 		}
 
 		private void BtnCopy_Click(object sender, EventArgs e)

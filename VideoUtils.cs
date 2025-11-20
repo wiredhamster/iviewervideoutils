@@ -50,6 +50,14 @@ namespace iviewer
 							case "extractframes":
 								result = ExtractFrames(inputFile, outputPath);
 								break;
+                            case "standardise":
+                                await StandardizeVideo(inputFile, outputPath);
+                                result = true;
+                                break;
+                            case "flip":
+                                await FlipVideoHorizontally(inputFile, outputFile);
+                                result = true;
+                                break;
 						}
 
 						if (result)
@@ -482,57 +490,75 @@ namespace iviewer
             }
         }
 
-        /// <summary>
-        /// Counts total frames and extracts the last one
-        /// </summary>
-        private static string ExtractLastFrameWithFrameCount(string inputVideoPath, string outputPath, bool upscale = false)
-        {
-            try
-            {
-                // Get video information
-                var videoInfo = FFProbe.Analyse(inputVideoPath);
-                var videoStream = videoInfo.PrimaryVideoStream;
+		/// <summary>
+		/// Counts total frames and extracts the last one
+		/// </summary>
+		private static string ExtractLastFrameWithFrameCount(string inputVideoPath, string outputPath, bool upscale = false)
+		{
+			try
+			{
+				// Get video information
+				var videoInfo = FFProbe.Analyse(inputVideoPath);
+				var videoStream = videoInfo.PrimaryVideoStream;
 
-                // Calculate total frames
-                double fps = videoStream.FrameRate;
-                double duration = videoInfo.Duration.TotalSeconds;
-                long totalFrames = (long)(fps * duration);
+				// Calculate total frames
+				double fps = videoStream.FrameRate;
+				double duration = videoInfo.Duration.TotalSeconds;
+				long totalFrames = (long)(fps * duration);
 
-                // Extract the last frame by frame number (0-indexed, so totalFrames-1)
-                var success = FFMpegArguments
-                    .FromFileInput(inputVideoPath)
-                    .OutputToFile(outputPath, true, options => options
-                        .WithCustomArgument($"-vf \"select=eq(n\\,{totalFrames - 1})\"") // Select specific frame
-                        .WithCustomArgument("-vframes 1")   // Extract only 1 frame
-                        .WithCustomArgument("-q:v 2")       // High quality
-                        .WithVideoCodec("png"))             // PNG codec
-                    .ProcessSynchronously();
+				// Use time-based seek which is more reliable than frame-based selection
+				// Seek to just before the end, then extract the last frame
+				double lastFrameTime = Math.Max(0, duration - (1.0 / fps));
 
-                if (!success)
-                {
-                    return null;
-                }
+				var success = FFMpegArguments
+					.FromFileInput(inputVideoPath, false, options => options
+						.Seek(TimeSpan.FromSeconds(lastFrameTime)))  // Seek to near the end
+					.OutputToFile(outputPath, true, options => options
+						.WithFrameOutputCount(1)   // Extract only 1 frame
+						.WithCustomArgument("-q:v 2")       // High quality
+						.WithVideoCodec("png"))             // PNG codec
+					.ProcessSynchronously();
 
-                if (upscale)
-                {
-                    outputPath = UpscaleImage(outputPath, Path.GetDirectoryName(outputPath), true);
-                }
+				if (!success || !File.Exists(outputPath))
+				{
+					throw new Exception("Could not extract last frame");
+				}
 
-                return success ? outputPath : null;
-            }
-            catch
-            {
-                // Final fallback - use the original time-based approach
-                var videoInfo = FFProbe.Analyse(inputVideoPath);
-                double videoDuration = videoInfo.Duration.TotalSeconds;
-                TimeSpan lastFrameTime = TimeSpan.FromSeconds(Math.Max(0, videoDuration - 0.033)); // One frame back at 30fps
+				if (upscale)
+				{
+					outputPath = UpscaleImage(outputPath, Path.GetDirectoryName(outputPath), true);
+				}
 
-                var success = FFMpeg.Snapshot(inputVideoPath, outputPath, captureTime: lastFrameTime);
-                return success ? outputPath : null;
-            }
-        }
+				return success ? outputPath : null;
+			}
+			catch (Exception ex)
+			{
+				Debug.WriteLine($"Error extracting last frame: {ex.Message}");
 
-        public static string ExtractFirstFrame(string videoPath, string outputPath, bool upscale = false)
+				// Final fallback - use the original time-based approach
+				try
+				{
+					var videoInfo = FFProbe.Analyse(inputVideoPath);
+					double videoDuration = videoInfo.Duration.TotalSeconds;
+					TimeSpan lastFrameTime = TimeSpan.FromSeconds(Math.Max(0, videoDuration - 0.033)); // One frame back at 30fps
+
+					var success = FFMpeg.Snapshot(inputVideoPath, outputPath, captureTime: lastFrameTime);
+
+					if (success && upscale && File.Exists(outputPath))
+					{
+						outputPath = UpscaleImage(outputPath, Path.GetDirectoryName(outputPath), true);
+					}
+
+					return success ? outputPath : null;
+				}
+				catch
+				{
+					return null;
+				}
+			}
+		}
+
+		public static string ExtractFirstFrame(string videoPath, string outputPath, bool upscale = false)
         {
             string tempPng = Path.Combine(Path.GetDirectoryName(outputPath), Path.GetRandomFileName() + ".png");
 
@@ -629,5 +655,149 @@ namespace iviewer
 
             return outputPath;
         }
-    }
+
+		/// <summary>
+		/// Splits a video at the specified time. The split frame will be the last frame of part 1 and first frame of part 2.
+		/// </summary>
+		public static async Task<(string part1, string part2)> SplitVideoAtTimeAsync(
+			string inputVideoPath,
+			double splitTime,
+			string outputPath1 = null,
+			string outputPath2 = null)
+		{
+			try
+			{
+				if (!File.Exists(inputVideoPath))
+				{
+					throw new FileNotFoundException("Input video file not found.", inputVideoPath);
+				}
+
+				// Get video info to validate split time
+				var videoInfo = FFProbe.Analyse(inputVideoPath);
+				var duration = videoInfo.Duration.TotalSeconds;
+				var fps = videoInfo.PrimaryVideoStream.FrameRate;
+
+				if (splitTime <= 0 || splitTime >= duration)
+				{
+					throw new ArgumentException($"Split time {splitTime}s must be between 0 and {duration}s");
+				}
+
+				// Generate output paths if not provided
+				if (outputPath1 == null || outputPath2 == null)
+				{
+					string directory = Path.GetDirectoryName(inputVideoPath);
+					string filenameWithoutExt = Path.GetFileNameWithoutExtension(inputVideoPath);
+					string extension = Path.GetExtension(inputVideoPath);
+
+					outputPath1 = outputPath1 ?? Path.Combine(directory, $"{filenameWithoutExt}_part1{extension}");
+					outputPath2 = outputPath2 ?? Path.Combine(directory, $"{filenameWithoutExt}_part2{extension}");
+				}
+
+				// Calculate frame duration
+				double frameDuration = 1.0 / fps;
+
+				// Part 1: from start UP TO AND INCLUDING the frame at splitTime
+				// The duration should go slightly past splitTime to include that frame
+				// We add a tiny amount (1ms) to ensure the frame at splitTime is included
+				var result1 = await FFMpegArguments
+					.FromFileInput(inputVideoPath)
+					.OutputToFile(outputPath1, true, options => options
+						.WithDuration(TimeSpan.FromSeconds(splitTime + 0.001))
+						.WithVideoCodec("libx264")
+						.WithCustomArgument("-crf 18")
+						.WithCustomArgument("-preset fast")
+						.CopyChannel(Channel.Audio))
+					.ProcessAsynchronously();
+
+				if (!result1)
+				{
+					throw new Exception("Failed to create first part of split video");
+				}
+
+				// Part 2: start from ONE FRAME BEFORE splitTime to include the split frame
+				// This ensures the frame at splitTime is the first frame of Part 2
+				double part2StartTime = Math.Max(0, splitTime - frameDuration);
+
+				var result2 = await FFMpegArguments
+					.FromFileInput(inputVideoPath, false, options => options
+						.Seek(TimeSpan.FromSeconds(part2StartTime)))
+					.OutputToFile(outputPath2, true, options => options
+						.WithVideoCodec("libx264")
+						.WithCustomArgument("-crf 18")
+						.WithCustomArgument("-preset fast")
+						.CopyChannel(Channel.Audio))
+					.ProcessAsynchronously();
+
+				if (!result2)
+				{
+					throw new Exception("Failed to create second part of split video");
+				}
+
+				Debug.WriteLine($"Video split successfully:");
+				Debug.WriteLine($"  Part 1: {outputPath1} (0 to {splitTime}s, last frame at ~{splitTime}s)");
+				Debug.WriteLine($"  Part 2: {outputPath2} (starts at {part2StartTime}s, first frame at ~{splitTime}s)");
+
+				return (outputPath1, outputPath2);
+			}
+			catch (Exception ex)
+			{
+				Debug.WriteLine($"Error splitting video: {ex.Message}");
+				return (null, null);
+			}
+		}
+
+		public static async Task StandardizeVideo(string inputPath, string outputDir)
+		{
+			if (!Directory.Exists(outputDir)) Directory.CreateDirectory(outputDir);
+
+			var mediaInfo = await FFProbe.AnalyseAsync(inputPath);
+			double duration = mediaInfo.Duration.TotalSeconds;
+			int totalFrames = (int)(duration * mediaInfo.VideoStreams[0].FrameRate);
+			int chunkSize = 81;
+			int fps = 16;
+			double chunkDuration = (double)chunkSize / fps;
+
+			for (int i = 0; i < totalFrames / chunkSize; i++)
+			{
+				string outputPath = Path.Combine(outputDir, $"{Path.GetFileNameWithoutExtension(inputPath)}_chunk{i + 1}.mp4");
+				double startTime = i * chunkDuration;
+
+				await FFMpegArguments
+					.FromFileInput(inputPath)
+					.OutputToFile(outputPath, true, options =>
+					{
+						options.WithCustomArgument($"-ss {startTime} -t {chunkDuration}");
+						options.WithVideoCodec("libx264");
+						options.WithCustomArgument("-preset slow");
+						options.WithConstantRateFactor(23);
+						options.WithCustomArgument($"-vf \"scale=1280:720:force_original_aspect_ratio=decrease,pad=1280:720:(ow-iw)/2:(oh-ih)/2\"");
+						options.WithCustomArgument($"-r {fps}");
+						options.WithCustomArgument($"-vframes {chunkSize}");
+						options.WithCustomArgument("-pix_fmt yuv420p");
+						options.WithCustomArgument("-an"); // No audio
+					})
+					.ProcessAsynchronously();
+
+				Console.WriteLine($"Processed chunk {i + 1} to {outputPath}");
+			}
+		}
+
+		public static async Task FlipVideoHorizontally(string inputPath, string outputPath)
+		{
+			await FFMpegArguments
+				.FromFileInput(inputPath)
+				.OutputToFile(outputPath, true, options =>
+				{
+					options.WithVideoCodec("libx264");
+					options.WithConstantRateFactor(23);
+					options.WithCustomArgument("-preset slow");
+					options.WithCustomArgument("-vf hflip");
+					options.WithCustomArgument("-pix_fmt yuv420p");
+					options.WithCustomArgument("-an"); // No audio, if desired; remove if audio needed
+				})
+				.ProcessAsynchronously();
+
+			Console.WriteLine($"Flipped video saved to {outputPath}");
+		}
+	}
 }

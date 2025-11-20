@@ -134,8 +134,9 @@ namespace iviewer
 				.Replace("\n", Environment.NewLine)
 				.Replace("\r", Environment.NewLine);
 
+			linkURL.Links.Clear();
+			linkURL.Links.Add(0, lora.URL.Length, lora.URL);
 			linkURL.Text = lora.URL;
-			linkURL.Links[0].LinkData = lora.URL;
 
 			//var triggerWords = lora.TriggerWords.Split('|');
 			var triggerWords = lora.TriggerWords.Split('\n').Where(w => !string.IsNullOrEmpty(w));

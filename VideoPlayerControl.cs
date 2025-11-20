@@ -111,6 +111,16 @@ namespace iviewer
 			}
 		}
 
+		public async Task<double> GetCurrentTimeAsync()
+		{
+			return await _player.GetCurrentTimeAsync();
+		}
+
+		public async Task<bool> IsPausedAsync()
+		{
+			return await _player.IsPausedAsync();
+		}
+
 		protected override void Dispose(bool disposing)
 		{
 			if (disposing)

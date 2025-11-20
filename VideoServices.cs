@@ -102,11 +102,39 @@ namespace iviewer.Services
 				}
 			}
 
-			string selectedWorkflow = string.IsNullOrEmpty(endImagePath)
-				? VideoGenerationConfig.I2vWorkflowPath
-				: VideoGenerationConfig.FlfWorkflowPath;
+			int frames = 81; // 101;
 
-			string workflowJson = await PrepareWorkflowAsync(selectedWorkflow, clip.Prompt, clip.ImagePath, endImagePath, video.Width, video.Height);
+			var compatibility = GetLoraCompatibility(clip.Prompt);
+			var selectedWorkflow = "";
+
+			if (compatibility == "Wan 2.2 I2V")
+			{
+				selectedWorkflow = string.IsNullOrEmpty(endImagePath)
+					? VideoGenerationConfig.I2vWorkflowPath
+					: VideoGenerationConfig.FlfWorkflowPath;
+			}
+			else if (compatibility == "Wan 2.2 5B")
+			{
+				if (!string.IsNullOrEmpty(endImagePath))
+				{
+					clip.Status = "Failed";
+					clip.Save();
+
+					return "";
+				}
+
+				selectedWorkflow = VideoGenerationConfig.Wan22_5BWorkflowPath;
+			}
+			else
+			{
+
+				clip.Status = "Failed";
+				clip.Save();
+
+				return "";
+			}
+
+			string workflowJson = await PrepareWorkflowAsync(selectedWorkflow, clip.Prompt, clip.ImagePath, endImagePath, video.Width, video.Height, frames);
 
 			clip.Status = "Generating";
 			clip.Save();
@@ -251,7 +279,7 @@ namespace iviewer.Services
 		}
 
 
-		private async Task<string> PrepareWorkflowAsync(string workflowPath, string prompt, string imagePath, string endImagePath, int width, int height)
+		private async Task<string> PrepareWorkflowAsync(string workflowPath, string prompt, string imagePath, string endImagePath, int width, int height, int frames)
 		{
 			string workflowJson = await File.ReadAllTextAsync(workflowPath);
 
@@ -276,59 +304,90 @@ namespace iviewer.Services
 			return workflowJson
 				.Replace("{PROMPT}", prompt)
 				.Replace("{WIDTH}", width.ToString())
-				.Replace("{HEIGHT}", height.ToString());
+				.Replace("{HEIGHT}", height.ToString())
+				.Replace("{FRAMES}", frames.ToString());
+		}
+
+		string GetLoraCompatibility(string prompt)
+		{
+			var compatibilityList = new List<string>();
+			foreach (Match match in Regex.Matches(prompt, loraMatchPattern))
+			{
+				string key = match.Groups[1].Value;
+				var lora = Lora.LoadFromKey(key);
+				if (!compatibilityList.Contains(lora.Compatibility))
+				{
+					compatibilityList.Add(lora.Compatibility);
+				}
+			}
+
+			var compatibility = "";
+			if (compatibilityList.All(c => c.Contains("Wan 2.2 I2V")))
+			{
+				compatibility = "Wan 2.2 I2V";
+			}
+			else if (compatibilityList.All(c => c.Contains("Wan 2.2 5B")))
+			{
+				compatibility = "Wan 2.2 5B";
+			}
+
+			return compatibility;
 		}
 
 		(string workflowJson, string cleanPrompt) PrepareWorkflowLoras(string workflowJson, string prompt)
 		{
-			string pattern = @"<lora:([^:]+):(-?\d+(?:\.\d+)?)(?::(-?\d+(?:\.\d+)?))?>";
 			var index = 1;
 
-			foreach (Match match in Regex.Matches(prompt, pattern))
+			foreach (Match match in Regex.Matches(prompt, loraMatchPattern))
 			{
 				string key = match.Groups[1].Value;
-				string firstNum = match.Groups[2].Value;
-				string secondNum = match.Groups[3].Value;
 				var lora = Lora.LoadFromKey(key);
+
+				var strengthIndex = 1;
 
 				if (lora.HighNoiseLora != "")
 				{
+					strengthIndex++;
 					workflowJson = workflowJson
 						.Replace($"{{LORA_HIGH{index}_NAME}}", lora.HighNoiseLora)
-						.Replace($"{{LORA_HIGH{index}_STRENGTH}}", lora.HighNoiseStrength.ToString());
+						.Replace($"{{LORA_HIGH{index}_STRENGTH}}", match.Groups[strengthIndex].ToString());
 				}
+
 				if (lora.LowNoiseLora != "")
 				{
+					strengthIndex++;
 					workflowJson = workflowJson
 						.Replace($"{{LORA_LOW{index}_NAME}}", lora.LowNoiseLora)
-						.Replace($"{{LORA_LOW{index}_STRENGTH}}", lora.LowNoiseStrength.ToString());
+						.Replace($"{{LORA_LOW{index}_STRENGTH}}", match.Groups[strengthIndex].ToString());
 				}
 				index++;
 			}
 
 			// Remove all lora tags from the prompt
-			string cleanPrompt = Regex.Replace(prompt, pattern, "").Trim();
+			string cleanPrompt = Regex.Replace(prompt, loraMatchPattern, "").Trim();
 
 			// Clean up multiple spaces that might be left after removal
 			cleanPrompt = Regex.Replace(cleanPrompt, @"\s+", " ");
 
 			// We need to replace any remaining literals with default values to keep Comfy happy
 			workflowJson = workflowJson
-				.Replace("{LORA_HIGH1_NAME}", "W25_Realistic_I2V_HIGH_v2.safetensors")
-				.Replace("{LORA_HIGH1_STRENGTH}", "1")
-				.Replace("{LORA_HIGH2_NAME}", "")
+				.Replace("{LORA_HIGH1_NAME}", "Physics_WAN_v7.safetensors")
+				.Replace("{LORA_HIGH1_STRENGTH}", "0")
+				.Replace("{LORA_HIGH2_NAME}", "Physics_WAN_v7.safetensors")
 				.Replace("{LORA_HIGH2_STRENGTH}", "0")
-				.Replace("{LORA_HIGH3_NAME}", "")
+				.Replace("{LORA_HIGH3_NAME}", "Physics_WAN_v7.safetensors")
 				.Replace("{LORA_HIGH3_STRENGTH}", "0")
-				.Replace("{LORA_LOW1_NAME}", "W25_Realistic_I2V_LOW_v2.safetensors")
-				.Replace("{LORA_LOW1_STRENGTH}", "1")
-				.Replace("{LORA_LOW2_NAME}", "")
+				.Replace("{LORA_LOW1_NAME}", "Physics_WAN_v7.safetensors")
+				.Replace("{LORA_LOW1_STRENGTH}", "0")
+				.Replace("{LORA_LOW2_NAME}", "Physics_WAN_v7.safetensors")
 				.Replace("{LORA_LOW2_STRENGTH}", "0")
-				.Replace("{LORA_LOW3_NAME}", "")
+				.Replace("{LORA_LOW3_NAME}", "Physics_WAN_v7.safetensors")
 				.Replace("{LORA_LOW3_STRENGTH}", "0");
 
 			return (workflowJson, cleanPrompt);
 		}
+
+		const string loraMatchPattern = @"<lora:([^:]+):(-?\d+(?:\.\d+)?)(?::(-?\d+(?:\.\d+)?))?>";
 
 		private async Task<string> UploadImageAsync(string imagePath)
 		{
@@ -1494,6 +1553,7 @@ namespace iviewer.Helpers
 					}
 
 					int targetPixels = 720 * 512;
+					//int targetPixels = 800 * 600;
 					double sqrtPixels = Math.Sqrt(targetPixels * aspectRatio);
 
 					int targetWidth = (int)Math.Ceiling(sqrtPixels / 16.0) * 16;

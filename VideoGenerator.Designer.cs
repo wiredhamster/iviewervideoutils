@@ -61,6 +61,9 @@ namespace iviewer
 			tabPageFullVideo = new TabPage();
 			btnExport = new Button();
 			tabPageLoras = new TabPage();
+			btnPrev = new Button();
+			btnNext = new Button();
+			btnSplit = new Button();
 			tabControl.SuspendLayout();
 			tabPageGeneration.SuspendLayout();
 			((System.ComponentModel.ISupportInitialize)dgvPrompts).BeginInit();
@@ -262,6 +265,9 @@ namespace iviewer
 			// 
 			// tabPagePerPrompt
 			// 
+			tabPagePerPrompt.Controls.Add(btnSplit);
+			tabPagePerPrompt.Controls.Add(btnNext);
+			tabPagePerPrompt.Controls.Add(btnPrev);
 			tabPagePerPrompt.Controls.Add(btnFiles);
 			tabPagePerPrompt.Controls.Add(btnExtractFrame);
 			tabPagePerPrompt.Controls.Add(btnPlay2x);
@@ -279,7 +285,7 @@ namespace iviewer
 			// btnFiles
 			// 
 			btnFiles.Anchor = AnchorStyles.Top | AnchorStyles.Right;
-			btnFiles.Location = new Point(884, 93);
+			btnFiles.Location = new Point(884, 151);
 			btnFiles.Name = "btnFiles";
 			btnFiles.Size = new Size(100, 23);
 			btnFiles.TabIndex = 11;
@@ -290,7 +296,7 @@ namespace iviewer
 			// btnExtractFrame
 			// 
 			btnExtractFrame.Anchor = AnchorStyles.Top | AnchorStyles.Right;
-			btnExtractFrame.Location = new Point(884, 64);
+			btnExtractFrame.Location = new Point(884, 92);
 			btnExtractFrame.Name = "btnExtractFrame";
 			btnExtractFrame.Size = new Size(100, 23);
 			btnExtractFrame.TabIndex = 10;
@@ -312,7 +318,7 @@ namespace iviewer
 			// btnPreview
 			// 
 			btnPreview.Anchor = AnchorStyles.Top | AnchorStyles.Right;
-			btnPreview.Location = new Point(884, 151);
+			btnPreview.Location = new Point(884, 209);
 			btnPreview.Name = "btnPreview";
 			btnPreview.Size = new Size(100, 23);
 			btnPreview.TabIndex = 8;
@@ -323,7 +329,7 @@ namespace iviewer
 			// btnImport
 			// 
 			btnImport.Anchor = AnchorStyles.Top | AnchorStyles.Right;
-			btnImport.Location = new Point(884, 122);
+			btnImport.Location = new Point(884, 180);
 			btnImport.Name = "btnImport";
 			btnImport.Size = new Size(100, 23);
 			btnImport.TabIndex = 7;
@@ -373,6 +379,39 @@ namespace iviewer
 			tabPageLoras.TabIndex = 3;
 			tabPageLoras.Text = "Loras";
 			tabPageLoras.UseVisualStyleBackColor = true;
+			// 
+			// btnPrev
+			// 
+			btnPrev.Anchor = AnchorStyles.Top | AnchorStyles.Right;
+			btnPrev.Location = new Point(884, 63);
+			btnPrev.Name = "btnPrev";
+			btnPrev.Size = new Size(48, 23);
+			btnPrev.TabIndex = 12;
+			btnPrev.Text = "<-";
+			btnPrev.UseVisualStyleBackColor = true;
+			btnPrev.Click += btnPrev_Click;
+			// 
+			// btnNext
+			// 
+			btnNext.Anchor = AnchorStyles.Top | AnchorStyles.Right;
+			btnNext.Location = new Point(938, 63);
+			btnNext.Name = "btnNext";
+			btnNext.Size = new Size(46, 23);
+			btnNext.TabIndex = 13;
+			btnNext.Text = "->";
+			btnNext.UseVisualStyleBackColor = true;
+			btnNext.Click += btnNext_Click;
+			// 
+			// btnSplit
+			// 
+			btnSplit.Anchor = AnchorStyles.Top | AnchorStyles.Right;
+			btnSplit.Location = new Point(884, 122);
+			btnSplit.Name = "btnSplit";
+			btnSplit.Size = new Size(100, 23);
+			btnSplit.TabIndex = 14;
+			btnSplit.Text = "Split";
+			btnSplit.UseVisualStyleBackColor = true;
+			btnSplit.Click += btnSplit_Click;
 			// 
 			// VideoGenerator
 			// 
@@ -544,5 +583,8 @@ namespace iviewer
 		private Button btnExtractFrame;
 		private Button btnFiles;
 		private TabPage tabPageLoras;
+		private Button btnSplit;
+		private Button btnNext;
+		private Button btnPrev;
 	}
 }

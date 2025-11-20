@@ -841,6 +841,60 @@ namespace iviewer
 			}
 		}
 
+		public async Task<double> GetCurrentTimeAsync()
+		{
+			try
+			{
+				if (!_isInitialized) return 0;
+
+				string script = @"
+            (function() {
+                const video = document.getElementById('videoPlayer');
+                return video.currentTime;
+            })();
+        ";
+
+				string result = await _webView.CoreWebView2.ExecuteScriptAsync(script);
+
+				// Parse the result (it comes back as a string)
+				if (double.TryParse(result, System.Globalization.NumberStyles.Any,
+					System.Globalization.CultureInfo.InvariantCulture, out double time))
+				{
+					return time;
+				}
+
+				return 0;
+			}
+			catch (Exception ex)
+			{
+				Debug.WriteLine($"Error getting current time: {ex.Message}");
+				return 0;
+			}
+		}
+
+		public async Task<bool> IsPausedAsync()
+		{
+			try
+			{
+				if (!_isInitialized) return false;
+
+				string script = @"
+            (function() {
+                const video = document.getElementById('videoPlayer');
+                return video.paused;
+            })();
+        ";
+
+				string result = await _webView.CoreWebView2.ExecuteScriptAsync(script);
+				return result.ToLower().Contains("true");
+			}
+			catch (Exception ex)
+			{
+				Debug.WriteLine($"Error checking paused state: {ex.Message}");
+				return false;
+			}
+		}
+
 		public void Dispose()
 		{
 			if (_isDisposed) return;

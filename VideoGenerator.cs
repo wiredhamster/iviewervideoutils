@@ -34,6 +34,7 @@ namespace iviewer
 		// Play all videos
 		private bool _isPlayingAll = false;
 		private int _currentPlayAllIndex = 0;
+		private int _currentPlayingVideoIndex = -1;
 		private List<ClipGenerationState> _playAllVideos = new List<ClipGenerationState>();
 		private List<ClipControl> _videoClipControls = new List<ClipControl>(); // Track video buttons for highlighting
 		private Button _currentlyHighlightedButton = null;
@@ -520,7 +521,17 @@ namespace iviewer
 
 			// Clear existing dynamic controls but keep the buttons and video player
 			var controlsToRemove = tabPagePerPrompt.Controls.OfType<Control>()
-				.Where(c => c != videoPlayerPerPrompt && c != btnPreview && c != btnImport && c != btnPlayAll && c != btnPlay2x && c != btnExtractFrame && c != btnFiles)
+				.Where(c => 
+					c != videoPlayerPerPrompt 
+					&& c != btnPreview 
+					&& c != btnImport 
+					&& c != btnPlayAll 
+					&& c != btnPlay2x 
+					&& c != btnExtractFrame 
+					&& c != btnFiles
+					&& c != btnPrev
+					&& c != btnNext
+					&& c != btnSplit)
 				.ToList();
 
 			foreach (var control in controlsToRemove)
@@ -728,6 +739,10 @@ namespace iviewer
 				StopPlayAllSequence();
 			}
 
+			// Track current video for split functionality
+			_currentPlayingVideoIndex = videoIndex;
+			btnSplit.Enabled = true;  // Enable split button when video is loaded
+
 			// Reset all highlights since user manually selected a video
 			ResetAllVideoButtonHighlights();
 
@@ -818,7 +833,7 @@ namespace iviewer
 
 				var row = dgvPrompts.Rows[i];
 				if ((row.Cells["colPrompt"].Value != null && row.Cells["colPrompt"].Value != rowClip.Prompt)
-					|| (row.Cells["colQueue"].Value != "Requeue" && rowClip.Status != "Requeue" && !string.Equals(row.Cells["colQueue"].Value.ToString(), rowClip.Status, StringComparison.OrdinalIgnoreCase)))
+					|| (row.Cells["colQueue"].Value != "Requeue" && rowClip.Status != "Requeue" && !string.Equals(row.Cells["colQueue"].Value?.ToString(), rowClip.Status, StringComparison.OrdinalIgnoreCase)))
 				{
 					//throw new Exception("Row != Clip");
 				}
@@ -1210,9 +1225,9 @@ namespace iviewer
 			if (Path.GetExtension(filePath).ToLower() == ".mp4")
 			{
 				// Extract first frame for video
-				imagePath = VideoUtils.ExtractFirstFrame(ofd.FileName, VideoGenerationConfig.TempFileDir, true);
+				imagePath = VideoUtils.ExtractFirstFrame(filePath, VideoGenerationConfig.TempFileDir, true);
 				_tempFiles.Add(imagePath);
-				RowClipState(rowIndex).VideoPath = ofd.FileName;
+				RowClipState(rowIndex).VideoPath = filePath;
 				wasGenerated = true;
 			}
 			else
@@ -1622,6 +1637,195 @@ namespace iviewer
 
 		#endregion
 
+		#region Split Video
+		private async void btnSplit_Click(object sender, EventArgs e)
+		{
+			try
+			{
+				// Validate we have a video selected
+				if (_currentPlayingVideoIndex < 0 || _currentPlayingVideoIndex >= dgvPrompts.RowCount)
+				{
+					MessageBox.Show("No video selected. Please click a video clip button first.");
+					return;
+				}
+
+				var clipState = RowClipState(_currentPlayingVideoIndex);
+				string videoPath = clipState.VideoPath;
+
+				if (string.IsNullOrEmpty(videoPath) || !File.Exists(videoPath))
+				{
+					MessageBox.Show("Invalid video path.");
+					return;
+				}
+
+				// Get video info FIRST (before any async WebView2 calls)
+				var videoInfo = FFProbe.Analyse(videoPath);
+
+				// Check if video is paused and get current time in one go
+				// This minimizes the number of async calls to WebView2
+				bool isPaused = await videoPlayerPerPrompt.IsPausedAsync();
+				if (!isPaused)
+				{
+					return; // Silently exit if not paused
+				}
+
+				// Get current playback time
+				double currentTime = await videoPlayerPerPrompt.GetCurrentTimeAsync();
+
+				// Do ALL validation before showing ANY dialogs
+				string validationError = null;
+				if (currentTime <= 0)
+				{
+					validationError = "Cannot split at the beginning of the video.";
+				}
+				else if (currentTime >= videoInfo.Duration.TotalSeconds - 0.1)
+				{
+					validationError = "Cannot split at the end of the video.";
+				}
+
+				// If there's a validation error, show it and exit
+				if (validationError != null)
+				{
+					// Add a small delay to ensure WebView2 operations are complete
+					await Task.Delay(100);
+					MessageBox.Show(validationError);
+					return;
+				}
+
+				// Add a small delay before showing the confirmation dialog
+				// This ensures all WebView2 async operations are fully complete
+				await Task.Delay(100);
+
+				// NOW show the confirmation dialog
+				var result = MessageBox.Show(
+					$"Split Clip {_currentPlayingVideoIndex + 1} at {currentTime:F3} seconds?\n\n" +
+					$"This will create two new clips:\n" +
+					$"• Clip {_currentPlayingVideoIndex + 1}: 0s to {currentTime:F3}s\n" +
+					$"• Clip {_currentPlayingVideoIndex + 2}: {currentTime:F3}s to end\n\n" +
+					$"The frame at {currentTime:F3}s will be the last frame of the first clip\n" +
+					$"and the first frame of the second clip.",
+					"Confirm Split",
+					MessageBoxButtons.YesNo,
+					MessageBoxIcon.Question);
+
+				if (result != DialogResult.Yes)
+					return;
+
+				// Disable button and stop playback during processing
+				btnSplit.Enabled = false;
+				btnSplit.Text = "Splitting...";
+
+				// Give the UI a moment to update before stopping the player
+				await Task.Delay(50);
+				await videoPlayerPerPrompt.StopAndHide();
+
+				// Split the video
+				var (part1, part2) = await VideoUtils.SplitVideoAtTimeAsync(videoPath, currentTime);
+
+				if (part1 != null && part2 != null)
+				{
+					// Update the current clip to use part1
+					clipState.VideoPath = part1;
+					clipState.Status = "Split";
+					_tempFiles.Add(part1);
+
+					// Create new clip state for part2
+					var newClipState = ClipGenerationState.New();
+					newClipState.VideoGenerationStatePK = _videoGenerationStatePK;
+					newClipState.Prompt = clipState.Prompt + " (continued)";
+					newClipState.VideoPath = part2;
+					newClipState.Status = "Split";
+					newClipState.ClipSpeed = clipState.ClipSpeed;
+					newClipState.TransitionType = clipState.TransitionType;
+					newClipState.TransitionDuration = clipState.TransitionDuration;
+					newClipState.TransitionDropFirstFrames = clipState.TransitionDropFirstFrames;
+					newClipState.TransitionDropLastFrames = clipState.TransitionDropLastFrames;
+					newClipState.TransitionAddFrames = clipState.TransitionAddFrames;
+
+					_tempFiles.Add(part2);
+
+					// Extract last frame from part1 to use as image for part2
+					string framePath = VideoUtils.ExtractLastFrame(part1, _videoGenerationState.TempDir, true);
+					if (!string.IsNullOrEmpty(framePath))
+					{
+						newClipState.ImagePath = framePath;
+						_tempFiles.Add(framePath);
+					}
+
+					// Update order indices for clips AFTER the split point
+					for (int i = _currentPlayingVideoIndex + 1; i < _videoGenerationState.ClipGenerationStates.Count; i++)
+					{
+						_videoGenerationState.ClipGenerationStates[i].OrderIndex++;
+						_videoGenerationState.ClipGenerationStates[i].Save();
+					}
+
+					// Set the correct order index for the new clip
+					newClipState.OrderIndex = _currentPlayingVideoIndex + 1;
+
+					// Insert the new clip into the state collection
+					_videoGenerationState.ClipGenerationStates.Insert(_currentPlayingVideoIndex + 1, newClipState);
+
+					// Save both clips
+					clipState.Save();
+					newClipState.Save();
+
+					// Now update the grid - IMPORTANT: Insert row, set Tag, and populate cells all together
+					int newRowIndex = _currentPlayingVideoIndex + 1;
+					dgvPrompts.Rows.Insert(newRowIndex);
+
+					// Set the Tag IMMEDIATELY after inserting the row
+					dgvPrompts.Rows[newRowIndex].Tag = newClipState;
+
+					// Populate ALL cells before any other operations
+					dgvPrompts.Rows[newRowIndex].Cells["colPrompt"].Value = newClipState.Prompt;
+					dgvPrompts.Rows[newRowIndex].Cells["colLora"].Value = "Select LoRA";
+					dgvPrompts.Rows[newRowIndex].Cells["colQueue"].Value = "Split";
+
+					if (!string.IsNullOrEmpty(newClipState.ImagePath))
+					{
+						dgvPrompts.Rows[newRowIndex].Cells["colImage"].Value =
+							ImageHelper.CreateThumbnail(newClipState.ImagePath, null, 160);
+					}
+
+					// Update original row status
+					dgvPrompts.Rows[_currentPlayingVideoIndex].Cells["colQueue"].Value = "Split";
+
+					// Save state
+					_videoGenerationState.Save();
+
+					// NOW it's safe to call UpdateUI() which calls CheckStates()
+					UpdateUI();
+					LoadPreviewTabs();
+
+					// Show success message with clip numbers instead of filenames
+					MessageBox.Show(
+						$"Clip {_currentPlayingVideoIndex + 1} split successfully!\n\n" +
+						$"Created:\n" +
+						$"• Clip {_currentPlayingVideoIndex + 1}: {currentTime:F3}s duration\n" +
+						$"• Clip {_currentPlayingVideoIndex + 2}: {(videoInfo.Duration.TotalSeconds - currentTime):F3}s duration",
+						"Split Complete",
+						MessageBoxButtons.OK,
+						MessageBoxIcon.Information);
+				}
+				else
+				{
+					MessageBox.Show("Failed to split video. Check the console for details.", "Split Failed", MessageBoxButtons.OK, MessageBoxIcon.Error);
+				}
+			}
+			catch (Exception ex)
+			{
+				MessageBox.Show($"Error splitting video: {ex.Message}", "Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
+				Debug.WriteLine($"Split error: {ex}");
+			}
+			finally
+			{
+				btnSplit.Enabled = true;
+				btnSplit.Text = "Split at Frame";
+			}
+		}
+
+		#endregion
+
 		#region View Files
 
 		private void btnFiles_Click(object sender, EventArgs e)
@@ -1805,6 +2009,16 @@ namespace iviewer
 
 		ClipGenerationState RowClipState(DataGridViewRow row) => (ClipGenerationState)row.Tag;
 
+		private void btnPrev_Click(object sender, EventArgs e)
+		{
+
+		}
+
+		private void btnNext_Click(object sender, EventArgs e)
+		{
+
+		}
+
 		IEnumerable<ClipGenerationState> GeneratedRows
 		{
 			get
@@ -1840,10 +2054,12 @@ namespace iviewer
 		public static string ComfyOutputDir => @"C:\Users\sysadmin\Documents\ComfyUI\output\iviewer\temp_output";
 		public static string TempFileDir => @"C:\Users\sysadmin\Documents\ComfyUI\output\iviewer\temp_files";
 		public static string WorkingDir => @"C:\Users\sysadmin\Documents\ComfyUI\output\iviewer";
-		public static string I2vWorkflowPath => @"C:\Users\sysadmin\Documents\ComfyUI\user\default\workflows\iviewer\Wan22 i2v - API - lora.json";
+		public static string I2vWorkflowPath => @"C:\Users\sysadmin\Documents\ComfyUI\user\default\workflows\iviewer\Wan22 i2v - API - 3lora.json";
 		public static string I2vWorkflowFileStem => "comfyui_video";
-		public static string FlfWorkflowPath => @"C:\Users\sysadmin\Documents\ComfyUI\user\default\workflows\iviewer\Wan22 flf - API - lora.json";
+		public static string FlfWorkflowPath => @"C:\Users\sysadmin\Documents\ComfyUI\user\default\workflows\iviewer\Wan22 flf - API - 3lora.json";
 		public static string FlfWorkflowFileStem => "comfyui_video";
+		public static string Wan22_5BWorkflowPath => @"C:\Users\sysadmin\Documents\ComfyUI\user\default\workflows\iviewer\Wan22 5B ti2v - API.json";
+
 		public static string InterpolateWorkflowPath => @"C:\Users\sysadmin\Documents\ComfyUI\user\default\workflows\iviewer\Interpolate - API.json";
 		public static string InterpolateWorkflowFileStem => "interpolated_";
 		public static string UpscaleWorkflowPath => @"C:\Users\sysadmin\Documents\ComfyUI\user\default\workflows\iviewer\Upscale - API.json";

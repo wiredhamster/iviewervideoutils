@@ -331,9 +331,9 @@ namespace iviewer
             WorkflowJson = string.Empty;
             TransitionType = "Interpolate";
             TransitionDuration = 0.15;
-            TransitionDropFirstFrames = 0;
+            TransitionDropFirstFrames = 1;
             TransitionDropLastFrames = 1;
-            TransitionAddFrames = 2;
+            TransitionAddFrames = 1;
             ClipSpeed = 1;
         }
 
