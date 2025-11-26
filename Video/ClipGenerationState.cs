@@ -329,11 +329,11 @@ namespace iviewer
             Prompt = string.Empty;
             WorkflowPath = string.Empty;
             WorkflowJson = string.Empty;
-            TransitionType = "Interpolate";
-            TransitionDuration = 0.15;
-            TransitionDropFirstFrames = 1;
-            TransitionDropLastFrames = 1;
-            TransitionAddFrames = 1;
+            TransitionType = "None";
+            TransitionDuration = 0;
+            TransitionDropFirstFrames = 0;
+            TransitionDropLastFrames = 0;
+            TransitionAddFrames = 0;
             ClipSpeed = 1;
         }
 

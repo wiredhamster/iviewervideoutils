@@ -14,25 +14,115 @@ namespace iviewer.Video
 
         private readonly VideoGenerationService _generationService;
 
-        public QueueForm()
-        {
-            InitializeComponent();
+		public QueueForm()
+		{
+			InitializeComponent();
 
-            _generationService = new VideoGenerationService();
+			_generationService = new VideoGenerationService();
 
-            SyncStates();
-            LoadVideos();
-            LoadClips(); // NB: this is slow because of all the thumbnail loading. Can maybe try to do it on scroll.
+			// Wire up scroll events for lazy loading
+			dgvVideos.Scroll += DgvVideos_Scroll;
+			dgvClips.Scroll += DgvClips_Scroll;
 
-            // Subscribe to events
-            //EventBus.ClipQueued += OnClipQueued;
-            EventBus.ClipStatusChanged += OnClipStatusChanged;
-            EventBus.ClipDeleted += OnClipDeleted;
-            EventBus.VideoStatusChanged += OnVideoStatusChanged;
-            EventBus.VideoDeleted += OnVideoDeleted;
-        }
+			// Also load visible thumbnails when tab changes
+			tabQueue.SelectedIndexChanged += TabQueue_SelectedIndexChanged;
 
-        public void Start()
+			SyncStates();
+			LoadVideos();
+			LoadClips();
+
+			// Load initial visible thumbnails
+			LoadVisibleThumbnails(dgvVideos);
+
+			// Subscribe to events
+			EventBus.ClipStatusChanged += OnClipStatusChanged;
+			EventBus.ClipDeleted += OnClipDeleted;
+			EventBus.VideoStatusChanged += OnVideoStatusChanged;
+			EventBus.VideoDeleted += OnVideoDeleted;
+
+			this.Shown += QueueForm_Shown;
+		}
+
+		#region Lazy loading thumbnails
+
+		private void QueueForm_Shown(object sender, EventArgs e)
+		{
+			// Load thumbnails for initially visible rows
+			if (tabQueue.SelectedIndex == 0)
+				LoadVisibleThumbnails(dgvVideos);
+			else if (tabQueue.SelectedIndex == 1)
+				LoadVisibleThumbnails(dgvClips);
+		}
+
+		private void TabQueue_SelectedIndexChanged(object sender, EventArgs e)
+		{
+			if (tabQueue.SelectedIndex == 0)
+				LoadVisibleThumbnails(dgvVideos);
+			else if (tabQueue.SelectedIndex == 1)
+				LoadVisibleThumbnails(dgvClips);
+		}
+
+		private void DgvVideos_Scroll(object sender, ScrollEventArgs e)
+		{
+			LoadVisibleThumbnails(dgvVideos);
+		}
+
+		private void DgvClips_Scroll(object sender, ScrollEventArgs e)
+		{
+			LoadVisibleThumbnails(dgvClips);
+		}
+
+		private HashSet<int> _loadingRows = new HashSet<int>();
+
+		private async void LoadVisibleThumbnails(DataGridView grid)
+		{
+			if (grid.RowCount == 0) return;
+
+			// Get first and last visible row indices
+			int firstVisible = grid.FirstDisplayedScrollingRowIndex;
+			if (firstVisible < 0) return;
+
+			int visibleCount = grid.DisplayedRowCount(false);
+			int lastVisible = Math.Min(firstVisible + visibleCount + 5, grid.RowCount - 1); // Load a few extra
+
+			// Load thumbnails for visible rows
+			for (int i = firstVisible; i <= lastVisible; i++)
+			{
+				if (_loadingRows.Contains(i)) continue; // Already loading
+
+				var imageCell = grid.Rows[i].Cells["Image"];
+
+				// Check if this cell has a placeholder and a path stored
+				if (imageCell.Value == ThumbnailCache.PlaceholderImage && imageCell.Tag is string imagePath)
+				{
+					_loadingRows.Add(i);
+
+					// Load thumbnail asynchronously
+					await Task.Run(() =>
+					{
+						var thumbnail = ThumbnailCache.GetThumbnail(imagePath);
+
+						// Update UI on main thread
+						if (grid.InvokeRequired)
+						{
+							grid.Invoke(new Action(() =>
+							{
+								if (i < grid.RowCount) // Row might have been deleted
+								{
+									grid.Rows[i].Cells["Image"].Value = thumbnail;
+									grid.Rows[i].Cells["Image"].Tag = null; // Clear tag to indicate loaded
+								}
+								_loadingRows.Remove(i);
+							}));
+						}
+					});
+				}
+			}
+		}
+
+		#endregion
+
+		public void Start()
         {
             BtnStart_Click(this, EventArgs.Empty);
         }
@@ -50,24 +140,27 @@ namespace iviewer.Video
             }
         }
 
-        void CreateVideoRow(VideoGenerationState video)
-        {
-            int rowIndex = dgvVideos.Rows.Add();
+		void CreateVideoRow(VideoGenerationState video)
+		{
+			int rowIndex = dgvVideos.Rows.Add();
 
-            string imgPath = video.ImagePath;
-            if (File.Exists(imgPath))
-            {
-                dgvVideos.Rows[rowIndex].Cells["Image"].Value = ImageHelper.CreateThumbnail(imgPath, null, 160);
-            }
-            //dgvVideos.Rows[rowIndex].Cells["PK"].Value = dr["PK"];
-            dgvVideos.Rows[rowIndex].Cells["Status"].Value = video.Status;
-            dgvVideos.Rows[rowIndex].Cells["CreatedDate"].Value = video.CreatedDate;
-            dgvVideos.Rows[rowIndex].Cells["ModifiedDate"].Value = video.ModifiedDate;
-            dgvVideos.Rows[rowIndex].Tag = video.PK;
-            dgvVideos.Rows[rowIndex].MinimumHeight = 160;
-        }
+			string imgPath = video.ImagePath;
 
-        private void LoadClips()
+			// Set placeholder initially
+			if (!string.IsNullOrEmpty(imgPath) && File.Exists(imgPath))
+			{
+				dgvVideos.Rows[rowIndex].Cells["Image"].Value = ThumbnailCache.PlaceholderImage;
+				dgvVideos.Rows[rowIndex].Cells["Image"].Tag = imgPath; // Store path for lazy load
+			}
+
+			dgvVideos.Rows[rowIndex].Cells["Status"].Value = video.Status;
+			dgvVideos.Rows[rowIndex].Cells["CreatedDate"].Value = video.CreatedDate;
+			dgvVideos.Rows[rowIndex].Cells["ModifiedDate"].Value = video.ModifiedDate;
+			dgvVideos.Rows[rowIndex].Tag = video.PK;
+			dgvVideos.Rows[rowIndex].MinimumHeight = 160;
+		}
+
+		private void LoadClips()
         {
             dgvClips.Rows.Clear();
             string sql = @"
@@ -85,25 +178,28 @@ ORDER BY v.CreatedDate, c.OrderIndex";
             }
         }
 
-        private void CreateClipRow(ClipGenerationState clip)
-        {
-            int rowIndex = dgvClips.Rows.Add();
+		private void CreateClipRow(ClipGenerationState clip)
+		{
+			int rowIndex = dgvClips.Rows.Add();
 
-            string imgPath = clip.ImagePath;
-            if (File.Exists(imgPath))
-            {
-                dgvClips.Rows[rowIndex].Cells["Image"].Value = ImageHelper.CreateThumbnail(imgPath, null, 160);
-            }
+			string imgPath = clip.ImagePath;
 
-            dgvClips.Rows[rowIndex].Cells["Prompt"].Value = clip.Prompt;
-            dgvClips.Rows[rowIndex].Cells["Status"].Value = clip.Status;
-            dgvClips.Rows[rowIndex].Cells["CreatedDate"].Value = clip.CreatedDate;
-            dgvClips.Rows[rowIndex].Cells["ModifiedDate"].Value = clip.ModifiedDate;
-            dgvClips.Rows[rowIndex].Tag = clip.PK;
-            dgvClips.Rows[rowIndex].MinimumHeight = 160;
-        }
+			// Set placeholder initially
+			if (!string.IsNullOrEmpty(imgPath) && File.Exists(imgPath))
+			{
+				dgvClips.Rows[rowIndex].Cells["Image"].Value = ThumbnailCache.PlaceholderImage;
+				dgvClips.Rows[rowIndex].Cells["Image"].Tag = imgPath; // Store path for lazy load
+			}
 
-        private void DgvVideos_DoubleClick(object sender, EventArgs e)
+			dgvClips.Rows[rowIndex].Cells["Prompt"].Value = clip.Prompt;
+			dgvClips.Rows[rowIndex].Cells["Status"].Value = clip.Status;
+			dgvClips.Rows[rowIndex].Cells["CreatedDate"].Value = clip.CreatedDate;
+			dgvClips.Rows[rowIndex].Cells["ModifiedDate"].Value = clip.ModifiedDate;
+			dgvClips.Rows[rowIndex].Tag = clip.PK;
+			dgvClips.Rows[rowIndex].MinimumHeight = 160;
+		}
+
+		private void DgvVideos_DoubleClick(object sender, EventArgs e)
         {
             if (dgvVideos.SelectedRows.Count > 0)
             {
@@ -447,98 +543,83 @@ ORDER BY Priority, v.CreatedDate {order}, c.OrderIndex";
             await File.WriteAllTextAsync(metaPath, json);
         }
 
-        #endregion
+		#endregion
 
-        #region Data Refresh
+		#region Data Refresh
 
-        //private void OnClipQueued(Guid clipPK)
-        //{
-        //    if (InvokeRequired)
-        //    {
-        //        Invoke(new Action<Guid>(OnClipQueued), clipPK);
-        //        return;
-        //    }
+		private void OnClipStatusChanged(Guid clipPK, Guid videoPK, string newStatus)
+		{
+			if (InvokeRequired)
+			{
+				Invoke(new Action<Guid, Guid, string>(OnClipStatusChanged), clipPK, videoPK, newStatus);
+				return;
+			}
 
-        //    var clip = ClipGenerationState.Load(clipPK);
-        //    if (clip != null)
-        //    {
-        //        var found = false;
+			var found = false;
+			var clip = ClipGenerationState.Load(clipPK);
+			if (clip != null)
+			{
+				foreach (DataGridViewRow row in dgvClips.Rows)
+				{
+					if ((Guid)row.Tag == clipPK)
+					{
+						row.Cells["Status"].Value = newStatus;
+						row.Cells["ModifiedDate"].Value = clip.ModifiedDate;
 
-        //        for (var i = 0; i < dgvClips.Rows.Count; i++)
-        //        {
-        //            if (((Guid)dgvClips.Rows[i].Tag) == clipPK)
-        //            {
-        //                found = true;
-        //                dgvClips.Rows[i].Cells["Status"].Value = clip.Status;
+						if (File.Exists(clip.ImagePath))
+						{
+							// Check if row is visible
+							bool isVisible = IsRowVisible(dgvClips, row.Index);
 
-        //                break;
-        //            }
-        //        }
+							if (isVisible)
+							{
+								// Load immediately for visible rows
+								var thumbnail = ThumbnailCache.GetThumbnail(clip.ImagePath);
+								row.Cells["Image"].Value = thumbnail ?? ThumbnailCache.PlaceholderImage;
+							}
+							else
+							{
+								// Set placeholder and tag for lazy load
+								row.Cells["Image"].Value = ThumbnailCache.PlaceholderImage;
+								row.Cells["Image"].Tag = clip.ImagePath;
+							}
+						}
 
-        //        if (!found)
-        //        {
-        //            CreateClipRow(clip);
-        //        }
+						found = true;
+						break;
+					}
+				}
 
-        //        UpdateVideoState(clip.VideoGenerationStatePK);
-        //        UpdateVideoRowState(clip.VideoGenerationStatePK);
-        //    }
-        //    else
-        //    {
-        //        // Time for a refresh
-        //        LoadVideos();
-        //        LoadClips();
-        //    }
-        //}
+				if (!found)
+				{
+					CreateClipRow(clip);
+				}
 
-        private void OnClipStatusChanged(Guid clipPK, Guid videoPK, string newStatus)
-        {
-            if (InvokeRequired)
-            {
-                Invoke(new Action<Guid, Guid, string>(OnClipStatusChanged), clipPK, newStatus);
-                return;
-            }
+				UpdateVideoState(clip.VideoGenerationStatePK);
+				UpdateVideoRowState(clip.VideoGenerationStatePK);
+			}
+			else
+			{
+				LoadVideos();
+				LoadClips();
+			}
+		}
 
-            // Update status in dgvClips (find row by PK, update Status cell)
-            var found = false;
-            var clip = ClipGenerationState.Load(clipPK);
-            if (clip != null)
-            {
+		private bool IsRowVisible(DataGridView grid, int rowIndex)
+		{
+			if (grid.RowCount == 0 || rowIndex < 0 || rowIndex >= grid.RowCount)
+				return false;
 
-                foreach (DataGridViewRow row in dgvClips.Rows)
-                {
-                    if ((Guid)row.Tag == clipPK) // Assuming Tag = PK
-                    {
-                        row.Cells["Status"].Value = newStatus;
-                        row.Cells["ModifiedDate"].Value = clip.ModifiedDate;
+			int firstVisible = grid.FirstDisplayedScrollingRowIndex;
+			if (firstVisible < 0) return false;
 
-                        if (File.Exists(clip.ImagePath))
-                        {
-                            row.Cells["Image"].Value = ImageHelper.CreateThumbnail(clip.ImagePath, null, 160);
-                        }
+			int visibleCount = grid.DisplayedRowCount(false);
+			int lastVisible = firstVisible + visibleCount;
 
-                        found = true;
-                        break;
-                    }
-                }
+			return rowIndex >= firstVisible && rowIndex <= lastVisible;
+		}
 
-                if (!found)
-                {
-                    CreateClipRow(clip);
-                }
-
-                UpdateVideoState(clip.VideoGenerationStatePK);
-                UpdateVideoRowState(clip.VideoGenerationStatePK);
-            }
-            else
-            {
-                // Time for a refresh
-                LoadVideos();
-                LoadClips();
-            }
-        }
-
-        private void OnClipDeleted(Guid clipPK, Guid videoPK)
+		private void OnClipDeleted(Guid clipPK, Guid videoPK)
         {
             if (InvokeRequired)
             {
@@ -629,17 +710,20 @@ ORDER BY Priority, v.CreatedDate {order}, c.OrderIndex";
             }
         }
 
-        #endregion
+		#endregion
 
-        protected override void OnFormClosing(FormClosingEventArgs e)
-        {
-            // Unsubscribe to avoid leaks
-            //EventBus.ClipQueued -= OnClipQueued;
-            EventBus.ClipStatusChanged -= OnClipStatusChanged;
-            EventBus.ClipDeleted -= OnClipDeleted;
-            EventBus.VideoStatusChanged -= OnVideoStatusChanged;
-            EventBus.VideoDeleted -= OnVideoDeleted;
-            base.OnFormClosing(e);
-        }
-    }
+		protected override void OnFormClosing(FormClosingEventArgs e)
+		{
+			// Clear thumbnail cache
+			ThumbnailCache.Clear();
+
+			// Unsubscribe to avoid leaks
+			EventBus.ClipStatusChanged -= OnClipStatusChanged;
+			EventBus.ClipDeleted -= OnClipDeleted;
+			EventBus.VideoStatusChanged -= OnVideoStatusChanged;
+			EventBus.VideoDeleted -= OnVideoDeleted;
+
+			base.OnFormClosing(e);
+		}
+	}
 }

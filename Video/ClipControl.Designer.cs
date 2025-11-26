@@ -90,7 +90,7 @@
 			cboEffect.Name = "cboEffect";
 			cboEffect.Size = new Size(83, 23);
 			cboEffect.TabIndex = 4;
-			cboEffect.Text = "Interpolate";
+			cboEffect.Text = "None";
 			// 
 			// txtDropLastFrames
 			// 
