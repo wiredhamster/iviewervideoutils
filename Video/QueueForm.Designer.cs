@@ -83,7 +83,6 @@
 			dgvVideos.Size = new Size(776, 535);
 			dgvVideos.TabIndex = 0;
 			dgvVideos.DoubleClick += DgvVideos_DoubleClick;
-			// Columns (e.g., PK, ImagePath, Status, CreatedDate)
 			dgvVideos.Columns.Add(new DataGridViewImageColumn { Name = "Image", HeaderText = "Image", ImageLayout = DataGridViewImageCellLayout.Zoom });
 			//dgvVideos.Columns.Add(new DataGridViewTextBoxColumn { Name = "PK", HeaderText = "PK", ReadOnly = true });
 			dgvVideos.Columns.Add(new DataGridViewTextBoxColumn { Name = "Status", HeaderText = "Status", ReadOnly = true });
